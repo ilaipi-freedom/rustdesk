@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <string>
 
 #include "win32_desktop.h"
 #include "flutter_window.h"
@@ -20,13 +21,40 @@ const std::vector<std::string> parameters_white_list = {"--install", "--cm"};
 
 const wchar_t* getWindowClassName();
 
+std::wstring getJwVisDeskCoreLibraryPath()
+{
+  wchar_t executable_path[32768] = {0};
+  constexpr DWORD executable_path_capacity =
+      static_cast<DWORD>(sizeof(executable_path) / sizeof(executable_path[0]));
+  const DWORD length = ::GetModuleFileNameW(nullptr, executable_path,
+                                             executable_path_capacity);
+  if (length == 0 || length >= executable_path_capacity)
+  {
+    return L"";
+  }
+
+  std::wstring path(executable_path, length);
+  const std::wstring::size_type separator = path.find_last_of(L"\\/");
+  if (separator == std::wstring::npos)
+  {
+    return L"";
+  }
+  return path.substr(0, separator + 1) + L"libjwvisdesk.dll";
+}
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command)
 {
-  HINSTANCE hInstance = LoadLibraryA("librustdesk.dll");
+  const std::wstring core_library_path = getJwVisDeskCoreLibraryPath();
+  if (core_library_path.empty())
+  {
+    std::wcerr << L"Failed to resolve the JwVisDesk core library path." << std::endl;
+    return EXIT_FAILURE;
+  }
+  HINSTANCE hInstance = LoadLibraryW(core_library_path.c_str());
   if (!hInstance)
   {
-    std::cout << "Failed to load librustdesk.dll." << std::endl;
+    std::wcerr << L"Failed to load " << core_library_path << L"." << std::endl;
     return EXIT_FAILURE;
   }
   FUNC_RUSTDESK_CORE_MAIN rustdesk_core_main =

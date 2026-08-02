@@ -101,11 +101,14 @@ if(PLUGIN_BUNDLED_LIBRARIES)
 endif()
 
 # flutter_rust_bridge
-set(RUSTDESK_LIB_BUILD_TYPE $<IF:$<CONFIG:Debug>,debug,release>)
-message(STATUS "rustdesk lib build type: ${RUSTDESK_LIB_BUILD_TYPE}")
-set(RUSTDESK_LIB "../../target/${RUSTDESK_LIB_BUILD_TYPE}/librustdesk.dll")
-install(FILES "${RUSTDESK_LIB}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-COMPONENT Runtime RENAME librustdesk.dll)
+set(JWVISDESK_LIB_BUILD_TYPE $<IF:$<CONFIG:Debug>,debug,release>)
+message(STATUS "JwVisDesk core lib build type: ${JWVISDESK_LIB_BUILD_TYPE}")
+set(JWVISDESK_CORE_LIB "../../target/${JWVISDESK_LIB_BUILD_TYPE}/librustdesk.dll")
+# Use a product-specific DLL name.  The official RustDesk runner also asks
+# Windows for `librustdesk.dll`; keeping that basename lets DLL search-path
+# state or an old installation load the wrong core before Flutter starts.
+install(FILES "${JWVISDESK_CORE_LIB}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+COMPONENT Runtime RENAME libjwvisdesk.dll)
 
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.

@@ -39,7 +39,6 @@ lazy_static::lazy_static! {
 
 fn initialize(app_dir: &str, custom_client_config: &str) {
     crate::initialize_jwvisdesk_defaults();
-    flutter::async_tasks::start_flutter_async_runner();
     // `APP_DIR` is set in `main_get_data_dir_ios()` on iOS.
     #[cfg(not(target_os = "ios"))]
     {
@@ -52,6 +51,11 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
         crate::read_custom_client(custom_client_config);
         crate::load_jwvisdesk_config();
     }
+    // `ui_interface::OPTIONS` is a process-wide cache. It may be initialized
+    // before the sidecar is read, so refresh it after all locked JwVisDesk
+    // settings and network values are installed.
+    crate::ui_interface::refresh_options();
+    flutter::async_tasks::start_flutter_async_runner();
     #[cfg(target_os = "android")]
     {
         // flexi_logger can't work when android_logger initialized.
@@ -3062,6 +3066,29 @@ pub fn session_get_common(
         Some(v)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static INITIALIZE_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn initialize_refreshes_cached_options_after_loading_jwvisdesk_defaults() {
+        let _guard = INITIALIZE_TEST_MUTEX.lock().unwrap();
+        let previous = config::OVERWRITE_SETTINGS.read().unwrap().clone();
+        config::OVERWRITE_SETTINGS.write().unwrap().clear();
+        crate::ui_interface::refresh_options();
+        assert_eq!(crate::ui_interface::get_option("access-mode"), "");
+
+        initialize("", "");
+
+        assert_eq!(crate::ui_interface::get_option("access-mode"), "full");
+        *config::OVERWRITE_SETTINGS.write().unwrap() = previous;
+        crate::ui_interface::refresh_options();
     }
 }
 

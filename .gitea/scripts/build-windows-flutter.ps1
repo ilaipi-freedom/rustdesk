@@ -630,7 +630,7 @@ function Validate-JwVisDeskBundle {
 
     $requiredFiles = @(
         (Join-Path $PortablePath "$AppName.exe"),
-        (Join-Path $PortablePath "librustdesk.dll"),
+        (Join-Path $PortablePath "libjwvisdesk.dll"),
         (Join-Path $PortablePath "jwvisdesk-config.json"),
         (Join-Path $PortablePath "data\flutter_assets")
     )
@@ -676,11 +676,17 @@ function Validate-JwVisDeskBundle {
         throw "JwVisDesk bundle contains an official RustDesk executable: $($officialExecutables[0].FullName)"
     }
 
+    $officialCoreLibraries = Get-ChildItem -LiteralPath $PortablePath -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -eq 'librustdesk.dll' }
+    if ($null -ne $officialCoreLibraries -and @($officialCoreLibraries).Count -gt 0) {
+        throw "JwVisDesk bundle contains the official RustDesk core DLL: $($officialCoreLibraries[0].FullName)"
+    }
+
     $configHash = (Get-FileHash -LiteralPath $sidecarPath -Algorithm SHA256).Hash
-    $dllHash = (Get-FileHash -LiteralPath (Join-Path $PortablePath 'librustdesk.dll') -Algorithm SHA256).Hash
+    $dllHash = (Get-FileHash -LiteralPath (Join-Path $PortablePath 'libjwvisdesk.dll') -Algorithm SHA256).Hash
     Write-Host "Validated JwVisDesk bundle at revision $sourceRevision."
     Write-Host "  executable: $(Join-Path $PortablePath "$AppName.exe")"
-    Write-Host "  librustdesk.dll SHA256: $dllHash"
+    Write-Host "  libjwvisdesk.dll SHA256: $dllHash"
     Write-Host "  sidecar SHA256: $configHash (network-config value not printed)"
 }
 
