@@ -158,16 +158,6 @@ class PlatformFFI {
       }
       _ffiBind = RustdeskImpl(dylib);
 
-      if (isLinux) {
-        if (isMain) {
-          // Start a dbus service for uri links, no need to await
-          _ffiBind.mainStartDbusServer();
-        }
-      } else if (isMacOS && isMain) {
-        // Start ipc service for uri links.
-        _ffiBind.mainStartIpcUrlServer();
-      }
-      _startListenEvent(_ffiBind); // global event
       try {
         if (isAndroid) {
           // only support for android
@@ -183,6 +173,31 @@ class PlatformFFI {
       } catch (e) {
         debugPrintStack(label: 'initialize failed: $e');
       }
+
+      // Load the custom client before starting any native services or event
+      // streams.  The native config singleton derives its file path from
+      // APP_NAME, which is set while mainInit loads custom client settings.
+      // Initializing the connection manager first can therefore make a
+      // JwVisDesk process read RustDesk's already-initialized config object.
+      if (isAndroid || isIOS) {
+        await _ffiBind.mainSetHomeDir(home: _homeDir);
+      }
+      await _ffiBind.mainInit(
+        appDir: _dir,
+        customClientConfig: '',
+      );
+
+      if (isLinux) {
+        if (isMain) {
+          // Start a dbus service for uri links, no need to await
+          _ffiBind.mainStartDbusServer();
+        }
+      } else if (isMacOS && isMain) {
+        // Start ipc service for uri links.
+        _ffiBind.mainStartIpcUrlServer();
+      }
+      _startListenEvent(_ffiBind); // global event
+
       String id = 'NA';
       String name = 'Flutter';
       DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
@@ -223,16 +238,11 @@ class PlatformFFI {
         debugPrint(
             '_appType:$_appType,info1-id:$id,info2-name:$name,dir:$_dir');
       }
+      await _ffiBind.mainDeviceId(id: id);
+      await _ffiBind.mainDeviceName(name: name);
       if (desktopType == DesktopType.cm) {
         await _ffiBind.cmInit();
       }
-      await _ffiBind.mainDeviceId(id: id);
-      await _ffiBind.mainDeviceName(name: name);
-      await _ffiBind.mainSetHomeDir(home: _homeDir);
-      await _ffiBind.mainInit(
-        appDir: _dir,
-        customClientConfig: '',
-      );
     } catch (e) {
       debugPrintStack(label: 'initialize failed: $e');
     }

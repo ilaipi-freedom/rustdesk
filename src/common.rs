@@ -2244,20 +2244,30 @@ fn apply_custom_client_data(mut data: HashMap<String, Value>) {
 }
 
 fn apply_jwvisdesk_config_data(mut data: serde_json::Map<String, Value>) {
-    if let Some(network_config) = data.remove("network-config") {
-        let Some(network_config) = network_config.as_str() else {
-            log::error!("JwVisDesk network-config must be a string");
-            return;
-        };
-        let Ok(server) = crate::custom_server::get_custom_server_from_string(network_config.trim())
-        else {
-            log::error!("Failed to decode JwVisDesk network-config");
-            return;
-        };
-        let mut settings = data
-            .remove("override-settings")
-            .and_then(|value| value.as_object().cloned())
-            .unwrap_or_default();
+    let server = match data.remove("network-config") {
+        Some(network_config) => match network_config.as_str() {
+            Some(network_config) => {
+                match crate::custom_server::get_custom_server_from_string(network_config.trim()) {
+                    Ok(server) => Some(server),
+                    Err(_) => {
+                        log::error!("Failed to decode JwVisDesk network-config");
+                        None
+                    }
+                }
+            }
+            None => {
+                log::error!("JwVisDesk network-config must be a string");
+                None
+            }
+        },
+        None => None,
+    };
+
+    let mut settings = data
+        .remove("override-settings")
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    if let Some(server) = server {
         settings.insert(
             "custom-rendezvous-server".to_owned(),
             Value::String(server.host),
@@ -2265,19 +2275,20 @@ fn apply_jwvisdesk_config_data(mut data: serde_json::Map<String, Value>) {
         settings.insert("relay-server".to_owned(), Value::String(server.relay));
         settings.insert("api-server".to_owned(), Value::String(server.api));
         settings.insert("key".to_owned(), Value::String(server.key));
-        for (key, value) in [
-            ("access-mode", "full"),
-            ("enable-remote-printer", "N"),
-            ("hide-network-settings", "Y"),
-            ("hide-server-settings", "Y"),
-            ("hide-proxy-settings", "Y"),
-            ("hide-websocket-settings", "Y"),
-            ("hide-remote-printer-settings", "Y"),
-        ] {
-            settings.insert(key.to_owned(), Value::String(value.to_owned()));
-        }
-        data.insert("override-settings".to_owned(), Value::Object(settings));
     }
+
+    for (key, value) in [
+        ("access-mode", "full"),
+        ("enable-remote-printer", "N"),
+        ("hide-network-settings", "Y"),
+        ("hide-server-settings", "Y"),
+        ("hide-proxy-settings", "Y"),
+        ("hide-websocket-settings", "Y"),
+        ("hide-remote-printer-settings", "Y"),
+    ] {
+        settings.insert(key.to_owned(), Value::String(value.to_owned()));
+    }
+    data.insert("override-settings".to_owned(), Value::Object(settings));
 
     data.insert("app-name".to_owned(), Value::String("JwVisDesk".to_owned()));
     apply_custom_client_data(data.into_iter().collect());
@@ -2719,7 +2730,12 @@ mod tests {
         self,
         time::{interval, interval_at, sleep, Duration, Instant, Interval},
     };
-    use std::collections::{HashMap, HashSet};
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Mutex,
+    };
+
+    static JWVISDESK_CONFIG_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     struct JwVisDeskConfigRestore {
         app_name: String,
@@ -2738,6 +2754,7 @@ mod tests {
 
     #[test]
     fn jwvisdesk_sidecar_applies_locked_network_settings() {
+        let _test_guard = JWVISDESK_CONFIG_TEST_MUTEX.lock().unwrap();
         let _restore = JwVisDeskConfigRestore {
             app_name: hbb_common::config::APP_NAME.read().unwrap().clone(),
             overwrite_settings: hbb_common::config::OVERWRITE_SETTINGS
@@ -2833,6 +2850,46 @@ mod tests {
                 Some(&"Y".to_owned())
             );
         }
+    }
+
+    #[test]
+    fn jwvisdesk_sidecar_keeps_identity_when_network_config_is_invalid() {
+        let _test_guard = JWVISDESK_CONFIG_TEST_MUTEX.lock().unwrap();
+        let _restore = JwVisDeskConfigRestore {
+            app_name: hbb_common::config::APP_NAME.read().unwrap().clone(),
+            overwrite_settings: hbb_common::config::OVERWRITE_SETTINGS
+                .read()
+                .unwrap()
+                .clone(),
+            builtin_settings: hbb_common::config::BUILTIN_SETTINGS.read().unwrap().clone(),
+        };
+        let data = serde_json::json!({
+            "network-config": "not-a-server-config",
+            "override-settings": {
+                "access-mode": "full"
+            }
+        });
+
+        apply_jwvisdesk_config_data(data.as_object().unwrap().clone());
+
+        assert_eq!(
+            hbb_common::config::APP_NAME.read().unwrap().as_str(),
+            "JwVisDesk"
+        );
+        assert_eq!(
+            hbb_common::config::BUILTIN_SETTINGS
+                .read()
+                .unwrap()
+                .get("hide-network-settings"),
+            Some(&"Y".to_owned())
+        );
+        assert_eq!(
+            hbb_common::config::OVERWRITE_SETTINGS
+                .read()
+                .unwrap()
+                .get("access-mode"),
+            Some(&"full".to_owned())
+        );
     }
 
     #[inline]
