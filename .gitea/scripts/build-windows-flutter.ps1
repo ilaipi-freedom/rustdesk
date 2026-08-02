@@ -19,6 +19,8 @@ $defaultToolCacheRoot = "C:\ProgramData\jwvisdesk-cache"
 $vcpkgCommit = "78f1a9e06a9a01f1b7b67e87c91600627ec66872"
 $vcpkgToolVersion = "2026-07-27"
 $vcpkgToolUri = "https://github.com/microsoft/vcpkg-tool/releases/download/$vcpkgToolVersion/vcpkg.exe"
+$vcpkgNasmVersion = "2.16.03"
+$vcpkgNasmSha512 = "22869ceb70ea0e6597fe06abe205b5d5dd66b41fe54dda73d338c488ba6ef13a39158f25b357616bf578752bb112869ef26ad897eb29352e85cf1ecc61a7c07a"
 $vcpkgTriplet = "x64-windows-static"
 $rustTarget = "x86_64-pc-windows-msvc"
 $rustupUri = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
@@ -393,6 +395,36 @@ function Get-VcpkgRoot {
     return $localRoot
 }
 
+function Set-VcpkgNasmVersion {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    # AOM checks for NASM's -Ox multipass optimization flag. NASM 3.01 no
+    # longer exposes that flag, so use the last compatible vcpkg tool version.
+    $finder = Join-Path $Root "scripts\cmake\vcpkg_find_acquire_program(NASM).cmake"
+    if (-not (Test-Path -LiteralPath $finder)) {
+        throw "vcpkg NASM acquisition file was not found at $finder."
+    }
+
+    $content = @'
+set(program_name nasm)
+set(program_version __NASM_VERSION__)
+set(brew_package_name "nasm")
+set(apt_package_name "nasm")
+if(CMAKE_HOST_WIN32)
+    set(download_urls
+        "https://www.nasm.us/pub/nasm/releasebuilds/${program_version}/win64/nasm-${program_version}-win64.zip"
+        "https://vcpkg.github.io/assets/nasm/nasm-${program_version}-win64.zip"
+    )
+    set(download_filename "nasm-${program_version}-win64.zip")
+    set(download_sha512 __NASM_SHA512__)
+    set(paths_to_search "${DOWNLOADS}/tools/nasm/nasm-${program_version}")
+endif()
+'@
+    $content = $content.Replace("__NASM_VERSION__", $vcpkgNasmVersion).Replace("__NASM_SHA512__", $vcpkgNasmSha512)
+    [IO.File]::WriteAllText($finder, $content, [Text.UTF8Encoding]::new($false))
+    Write-Host "Configured vcpkg to use NASM $vcpkgNasmVersion for AOM compatibility."
+}
+
 function Apply-FlutterPatch {
     param(
         [Parameter(Mandatory = $true)][string]$FlutterRoot,
@@ -592,6 +624,7 @@ try {
     Copy-Item (Join-Path $repo "flutter\macos\Runner\bridge_generated.h") (Join-Path $repo "flutter\ios\Runner\bridge_generated.h") -Force
 
     $vcpkgRoot = Get-VcpkgRoot $buildRoot
+    Set-VcpkgNasmVersion $vcpkgRoot
     $env:VCPKG_ROOT = $vcpkgRoot
     $vcpkg = Join-Path $vcpkgRoot "vcpkg.exe"
     if ([string]::IsNullOrWhiteSpace($env:VCPKG_MAX_CONCURRENCY)) {
