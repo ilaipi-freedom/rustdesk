@@ -1,0 +1,369 @@
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\")).Path
+$buildRoot = Join-Path $repo ".gitea-build"
+$stage = Join-Path $buildRoot "stage"
+$portable = Join-Path $stage "rustdesk-windows-x64-portable"
+$packerRoot = Join-Path $buildRoot "portable-packer"
+$destination = "D:\work\YYM\release\jwvisdesk"
+
+$flutterVersion = "3.24.5"
+$rustVersion = "1.75"
+$llvmVersion = "15.0.6"
+$cargoExpandVersion = "1.0.95"
+$bridgeVersion = "1.80.1"
+$vcpkgCommit = "120deac3062162151622ca4860575a33844ba10b"
+$vcpkgTriplet = "x64-windows-static"
+$rustTarget = "x86_64-pc-windows-msvc"
+
+function Require-Command {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+        throw "Required command '$Name' was not found on PATH."
+    }
+}
+
+function Invoke-Checked {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $false)][object[]]$Arguments = @()
+    )
+
+    Write-Host "> $FilePath $($Arguments -join ' ')"
+    & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "Command failed with exit code $exitCode`: $FilePath $($Arguments -join ' ')"
+    }
+}
+
+function Download-File {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    Write-Host "Downloading $Uri"
+    Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Path
+}
+
+function Remove-Directory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (Test-Path -LiteralPath $Path) {
+        Remove-Item -LiteralPath $Path -Recurse -Force
+    }
+}
+
+function Get-VcpkgRoot {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $configuredRoot = $env:VCPKG_ROOT
+    if (-not [string]::IsNullOrWhiteSpace($configuredRoot) -and
+        (Test-Path -LiteralPath (Join-Path $configuredRoot ".git")) -and
+        (Test-Path -LiteralPath (Join-Path $configuredRoot "vcpkg.exe"))) {
+        $current = (& git -C $configuredRoot rev-parse HEAD 2>$null | Out-String).Trim()
+        if ($current -eq $vcpkgCommit) {
+            Write-Host "Using configured vcpkg at $configuredRoot ($current)."
+            return $configuredRoot
+        }
+        Write-Host "Configured vcpkg is not at the required commit; using a workspace-local copy."
+    }
+
+    $localRoot = Join-Path $Root "vcpkg"
+    Remove-Directory $localRoot
+    Invoke-Checked "git" @("clone", "--filter=blob:none", "https://github.com/microsoft/vcpkg.git", $localRoot)
+    Invoke-Checked "git" @("-C", $localRoot, "fetch", "--depth", "1", "origin", $vcpkgCommit)
+    Invoke-Checked "git" @("-C", $localRoot, "checkout", "--force", $vcpkgCommit)
+    Invoke-Checked (Join-Path $localRoot "bootstrap-vcpkg.bat") @("-disableMetrics")
+    return $localRoot
+}
+
+function Apply-FlutterPatch {
+    param(
+        [Parameter(Mandatory = $true)][string]$FlutterRoot,
+        [Parameter(Mandatory = $true)][string]$PatchPath
+    )
+
+    $dropdownPath = Join-Path $FlutterRoot "packages\flutter\lib\src\material\dropdown_menu.dart"
+    if (-not (Test-Path -LiteralPath $dropdownPath)) {
+        throw "Flutter dropdown_menu.dart was not found at $dropdownPath."
+    }
+
+    $dropdownSource = Get-Content -LiteralPath $dropdownPath -Raw
+    if ($dropdownSource -match "late bool _enableFilter") {
+        Invoke-Checked "git" @("-C", $FlutterRoot, "apply", $PatchPath)
+        return
+    }
+
+    if ($dropdownSource -notmatch "bool _enableFilter = false") {
+        throw "Flutter $flutterVersion does not match the expected dropdown menu patch context."
+    }
+
+    Write-Host "Flutter dropdown filter patch is already applied."
+}
+
+function Install-BridgeCodegen {
+    $bridgeCommand = Get-Command flutter_rust_bridge_codegen -ErrorAction SilentlyContinue
+    if ($null -eq $bridgeCommand) {
+        Invoke-Checked "cargo" @("+$rustVersion", "install", "flutter_rust_bridge_codegen", "--version", $bridgeVersion, "--features", "uuid", "--locked")
+        return
+    }
+
+    $bridgeOutput = (& flutter_rust_bridge_codegen --version 2>&1 | Out-String).Trim()
+    if ($bridgeOutput -notmatch [regex]::Escape($bridgeVersion)) {
+        Invoke-Checked "cargo" @("+$rustVersion", "install", "flutter_rust_bridge_codegen", "--version", $bridgeVersion, "--features", "uuid", "--locked", "--force")
+    }
+}
+
+function Add-UsbDriver {
+    param(
+        [Parameter(Mandatory = $true)][string]$PortablePath,
+        [Parameter(Mandatory = $true)][string]$WorkPath
+    )
+
+    $archive = Join-Path $WorkPath "usbmmidd_v2.zip"
+    $extract = Join-Path $WorkPath "usbmmidd-extract"
+    Download-File "https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip" $archive
+    Remove-Directory $extract
+    Expand-Archive -LiteralPath $archive -DestinationPath $extract -Force
+
+    $driverRoot = Get-ChildItem -LiteralPath $extract -Directory -Recurse |
+        Where-Object { $_.Name -eq "usbmmidd_v2" } |
+        Select-Object -First 1
+    if ($null -eq $driverRoot) {
+        throw "usbmmidd_v2.zip did not contain a usbmmidd_v2 directory."
+    }
+
+    Remove-Directory (Join-Path $driverRoot.FullName "Win32")
+    @("deviceinstaller64.exe", "deviceinstaller.exe", "usbmmidd.bat") | ForEach-Object {
+        $file = Join-Path $driverRoot.FullName $_
+        if (Test-Path -LiteralPath $file) {
+            Remove-Item -LiteralPath $file -Force
+        }
+    }
+    Copy-Item -Path (Join-Path $driverRoot.FullName "*") -Destination $PortablePath -Recurse -Force
+}
+
+function Add-PrinterDriver {
+    param(
+        [Parameter(Mandatory = $true)][string]$PortablePath,
+        [Parameter(Mandatory = $true)][string]$WorkPath
+    )
+
+    try {
+        $driverArchive = Join-Path $WorkPath "rustdesk_printer_driver_v4-1.4.zip"
+        $adapterArchive = Join-Path $WorkPath "printer_driver_adapter.zip"
+        $checksums = Join-Path $WorkPath "sha256sums"
+        Download-File "https://github.com/rustdesk/hbb_common/releases/download/driver/rustdesk_printer_driver_v4-1.4.zip" $driverArchive
+        Download-File "https://github.com/rustdesk/hbb_common/releases/download/driver/printer_driver_adapter.zip" $adapterArchive
+        Download-File "https://github.com/rustdesk/hbb_common/releases/download/driver/sha256sums" $checksums
+
+        $sumText = Get-Content -LiteralPath $checksums -Raw
+        $driverExpected = ([regex]::Match($sumText, "(?m)^([a-fA-F0-9]{64}) \*rustdesk_printer_driver_v4-1.4\.zip$")).Groups[1].Value
+        $adapterExpected = ([regex]::Match($sumText, "(?m)^([a-fA-F0-9]{64}) \*printer_driver_adapter\.zip$")).Groups[1].Value
+        $driverActual = (Get-FileHash -LiteralPath $driverArchive -Algorithm SHA256).Hash
+        $adapterActual = (Get-FileHash -LiteralPath $adapterArchive -Algorithm SHA256).Hash
+        if ([string]::IsNullOrWhiteSpace($driverExpected) -or [string]::IsNullOrWhiteSpace($adapterExpected) -or
+            $driverExpected.ToUpperInvariant() -ne $driverActual.ToUpperInvariant() -or
+            $adapterExpected.ToUpperInvariant() -ne $adapterActual.ToUpperInvariant()) {
+            Write-Warning "Printer driver checksum verification failed; skipping optional printer files."
+            return
+        }
+
+        $driverExtract = Join-Path $WorkPath "printer-driver-extract"
+        $adapterExtract = Join-Path $WorkPath "printer-adapter-extract"
+        Remove-Directory $driverExtract
+        Remove-Directory $adapterExtract
+        Expand-Archive -LiteralPath $driverArchive -DestinationPath $driverExtract -Force
+        Expand-Archive -LiteralPath $adapterArchive -DestinationPath $adapterExtract -Force
+
+        $driverFolder = Get-ChildItem -LiteralPath $driverExtract -Directory -Recurse |
+            Where-Object { $_.Name -eq "rustdesk_printer_driver_v4-1.4" } |
+            Select-Object -First 1
+        if ($null -eq $driverFolder) {
+            throw "Verified printer driver archive did not contain its expected directory."
+        }
+
+        $destinationDrivers = Join-Path $PortablePath "drivers\RustDeskPrinterDriver"
+        New-Item -ItemType Directory -Path $destinationDrivers -Force | Out-Null
+        Copy-Item -Path (Join-Path $driverFolder.FullName "*") -Destination $destinationDrivers -Recurse -Force
+
+        $adapter = Get-ChildItem -LiteralPath $adapterExtract -File -Recurse |
+            Where-Object { $_.Name -eq "printer_driver_adapter.dll" } |
+            Select-Object -First 1
+        if ($null -eq $adapter) {
+            throw "Verified printer adapter archive did not contain printer_driver_adapter.dll."
+        }
+        Copy-Item -LiteralPath $adapter.FullName -Destination $PortablePath -Force
+    }
+    catch {
+        Write-Warning "Optional printer driver files were skipped: $($_.Exception.Message)"
+    }
+}
+
+try {
+    if (-not [Environment]::Is64BitOperatingSystem) {
+        throw "The Gitea worker must be a 64-bit Windows host."
+    }
+
+    @("git", "python", "cargo", "rustup", "flutter", "clang", "cmake", "ninja", "msbuild", "nuget") | ForEach-Object {
+        Require-Command $_
+    }
+    if ([string]::IsNullOrWhiteSpace($env:VCPKG_ROOT)) {
+        Write-Host "VCPKG_ROOT is not configured; a workspace-local vcpkg checkout will be used."
+    }
+
+    New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
+    Remove-Directory $stage
+    Remove-Directory $packerRoot
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+
+    $flutterCommand = Get-Command flutter
+    $flutterPath = if (-not [string]::IsNullOrWhiteSpace($flutterCommand.Source)) { $flutterCommand.Source } else { $flutterCommand.Definition }
+    $flutterRoot = Split-Path (Split-Path $flutterPath -Parent) -Parent
+    $flutterVersionOutput = (& flutter --version 2>&1 | Out-String).Trim()
+    Write-Host $flutterVersionOutput
+    if ($flutterVersionOutput -notmatch [regex]::Escape($flutterVersion)) {
+        throw "Flutter $flutterVersion is required, but the runner reported: $flutterVersionOutput"
+    }
+
+    $flutterPatch = Join-Path $repo ".github\patches\flutter_3.24.4_dropdown_menu_enableFilter.diff"
+    Apply-FlutterPatch $flutterRoot $flutterPatch
+    & flutter doctor -v
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "flutter doctor reported optional platform issues; continuing with the Windows build."
+    }
+    Invoke-Checked "flutter" @("precache", "--windows")
+
+    $engineArchive = Join-Path $buildRoot "windows-x64-release.zip"
+    $engineExtract = Join-Path $buildRoot "windows-x64-release"
+    Download-File "https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip" $engineArchive
+    Remove-Directory $engineExtract
+    Expand-Archive -LiteralPath $engineArchive -DestinationPath $engineExtract -Force
+    $engineDestination = Join-Path $flutterRoot "bin\cache\artifacts\engine\windows-x64-release"
+    New-Item -ItemType Directory -Path $engineDestination -Force | Out-Null
+    Copy-Item -Path (Join-Path $engineExtract "*") -Destination $engineDestination -Recurse -Force
+
+    Invoke-Checked "rustup" @("toolchain", "install", $rustVersion, "--profile", "minimal")
+    Invoke-Checked "rustup" @("target", "add", $rustTarget, "--toolchain", $rustVersion)
+    $env:RUSTUP_TOOLCHAIN = $rustVersion
+    $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+    if ((Test-Path -LiteralPath $cargoBin) -and $env:Path -notlike "*$cargoBin*") {
+        $env:Path = "$cargoBin;$env:Path"
+    }
+    $env:VCPKG_DEFAULT_TRIPLET = $vcpkgTriplet
+    $env:VCPKG_DEFAULT_HOST_TRIPLET = $vcpkgTriplet
+    Write-Host "Expected LLVM/Clang version: $llvmVersion"
+    Invoke-Checked "clang" @("--version")
+
+    if (-not (Get-Command cargo-expand -ErrorAction SilentlyContinue)) {
+        Invoke-Checked "cargo" @("+$rustVersion", "install", "cargo-expand", "--version", $cargoExpandVersion, "--locked")
+    }
+    Install-BridgeCodegen
+    Push-Location (Join-Path $repo "flutter")
+    Invoke-Checked "flutter" @("pub", "get")
+    Pop-Location
+    Invoke-Checked "flutter_rust_bridge_codegen" @(
+        "--rust-input", (Join-Path $repo "src\flutter_ffi.rs"),
+        "--dart-output", (Join-Path $repo "flutter\lib\generated_bridge.dart"),
+        "--c-output", (Join-Path $repo "flutter\macos\Runner\bridge_generated.h")
+    )
+    Copy-Item (Join-Path $repo "flutter\macos\Runner\bridge_generated.h") (Join-Path $repo "flutter\ios\Runner\bridge_generated.h") -Force
+
+    $vcpkgRoot = Get-VcpkgRoot $buildRoot
+    $env:VCPKG_ROOT = $vcpkgRoot
+    $vcpkg = Join-Path $vcpkgRoot "vcpkg.exe"
+    try {
+        Push-Location $repo
+        Invoke-Checked $vcpkg @("install", "--triplet", $vcpkgTriplet, "--x-install-root=$(Join-Path $vcpkgRoot 'installed')")
+        Pop-Location
+    }
+    catch {
+        Write-Host "vcpkg installation failed; recent logs:"
+        Get-ChildItem -LiteralPath (Join-Path $vcpkgRoot "buildtrees") -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -eq ".log" } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 5 |
+            ForEach-Object { Write-Host "--- $($_.FullName)"; Get-Content -LiteralPath $_.FullName -Tail 80 }
+        throw
+    }
+
+    Push-Location $repo
+    Invoke-Checked "python" @("build.py", "--portable", "--flutter", "--skip-portable-pack", "--hwcodec", "--vram")
+    Pop-Location
+
+    $releaseSource = Join-Path $repo "flutter\build\windows\x64\runner\Release"
+    if (-not (Test-Path -LiteralPath (Join-Path $releaseSource "rustdesk.exe"))) {
+        throw "Flutter Release output does not contain rustdesk.exe: $releaseSource"
+    }
+    New-Item -ItemType Directory -Path $portable -Force | Out-Null
+    Copy-Item -Path (Join-Path $releaseSource "*") -Destination $portable -Recurse -Force
+    Add-UsbDriver $portable $buildRoot
+    Add-PrinterDriver $portable $buildRoot
+
+    New-Item -ItemType Directory -Path $packerRoot -Force | Out-Null
+    Copy-Item -Path (Join-Path $repo "libs\portable\*") -Destination $packerRoot -Recurse -Force
+    Push-Location $packerRoot
+    Invoke-Checked "python" @("-m", "pip", "install", "-r", (Join-Path $packerRoot "requirements.txt"))
+    Invoke-Checked "python" @(
+        (Join-Path $packerRoot "generate.py"),
+        "-f", $portable,
+        "-o", $packerRoot,
+        "-e", (Join-Path $portable "rustdesk.exe")
+    )
+    Pop-Location
+    $packer = Join-Path $packerRoot "target\release\rustdesk-portable-packer.exe"
+    if (-not (Test-Path -LiteralPath $packer)) {
+        throw "Portable packer executable was not created."
+    }
+    $portableExe = Join-Path $stage "rustdesk-windows-x64-portable.exe"
+    Copy-Item -LiteralPath $packer -Destination $portableExe -Force
+
+    $manifest = Join-Path $repo "res\manifest.xml"
+    $manifestText = Get-Content -LiteralPath $manifest -Raw
+    Set-Content -LiteralPath $manifest -Value ($manifestText -replace "(?m)^.*dpiAware.*\r?\n", "") -NoNewline
+    Push-Location (Join-Path $repo "res\msi")
+    Invoke-Checked "python" @("preprocess.py", "--arp", "-d", $portable)
+    Invoke-Checked "nuget" @("restore", "msi.sln")
+    Invoke-Checked "msbuild" @("msi.sln", "-p:Configuration=Release", "-p:Platform=x64", "/p:TargetVersion=Windows10")
+    Pop-Location
+
+    $msi = Get-ChildItem -LiteralPath (Join-Path $repo "res\msi\Package\bin") -File -Recurse |
+        Where-Object { $_.Name -eq "Package.msi" -and $_.FullName -match "\\Release\\en-us\\Package\.msi$" } |
+        Select-Object -First 1
+    if ($null -eq $msi) {
+        throw "MSI build completed without producing Package.msi."
+    }
+    $msiOutput = Join-Path $stage "rustdesk-windows-x64.msi"
+    Copy-Item -LiteralPath $msi.FullName -Destination $msiOutput -Force
+
+    if (-not (Test-Path -LiteralPath (Join-Path $portable "rustdesk.exe"))) {
+        throw "Portable executable missing from staged directory."
+    }
+    if (-not (Test-Path -LiteralPath $portableExe)) {
+        throw "Portable self-extracted executable missing from staging."
+    }
+    if (-not (Test-Path -LiteralPath $msiOutput)) {
+        throw "MSI missing from staging."
+    }
+
+    New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    Get-ChildItem -LiteralPath $destination -Force | Remove-Item -Recurse -Force
+    Copy-Item -LiteralPath $portable -Destination (Join-Path $destination "rustdesk-windows-x64-portable") -Recurse -Force
+    Copy-Item -LiteralPath $portableExe -Destination $destination -Force
+    Copy-Item -LiteralPath $msiOutput -Destination $destination -Force
+
+    Write-Host "Build completed. Final outputs:"
+    Get-ChildItem -LiteralPath $destination -Force |
+        Select-Object FullName, Length, LastWriteTime |
+        Format-Table -AutoSize |
+        Out-String |
+        Write-Host
+}
+catch {
+    Write-Error "Windows Flutter build failed: $($_.Exception.Message)"
+    exit 1
+}
