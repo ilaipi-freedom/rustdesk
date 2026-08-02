@@ -16,6 +16,8 @@ $bridgeVersion = "1.80.1"
 $nugetUri = "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
 $defaultToolCacheRoot = "C:\ProgramData\jwvisdesk-cache"
 $vcpkgCommit = "120deac3062162151622ca4860575a33844ba10b"
+$vcpkgToolVersion = "2026-07-27"
+$vcpkgToolUri = "https://github.com/microsoft/vcpkg-tool/releases/download/$vcpkgToolVersion/vcpkg.exe"
 $vcpkgTriplet = "x64-windows-static"
 $rustTarget = "x86_64-pc-windows-msvc"
 $rustupUri = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
@@ -73,6 +75,37 @@ function Download-File {
 
     Write-Host "Downloading $Uri"
     Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Path
+}
+
+function Test-VcpkgToolVersion {
+    param([Parameter(Mandatory = $true)][string]$Executable)
+
+    if (-not (Test-Path -LiteralPath $Executable)) {
+        return $false
+    }
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = (& $Executable "version" 2>&1 | Out-String)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    return $exitCode -eq 0 -and $output -match [regex]::Escape($vcpkgToolVersion)
+}
+
+function Update-VcpkgTool {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $target = Join-Path $Root "vcpkg.exe"
+    $download = Join-Path $Root "vcpkg.exe.download"
+    Download-File $vcpkgToolUri $download
+    Move-Item -LiteralPath $download -Destination $target -Force
+    if (-not (Test-VcpkgToolVersion $target)) {
+        throw "vcpkg tool $vcpkgToolVersion was not installed at $target."
+    }
+    Write-Host "Using vcpkg tool $vcpkgToolVersion from $target."
 }
 
 function Initialize-RustToolchain {
@@ -315,11 +348,12 @@ function Get-VcpkgRoot {
         (Test-Path -LiteralPath (Join-Path $configuredRoot "vcpkg.exe"))) {
         $current = (& git -C $configuredRoot rev-parse HEAD 2>$null | Out-String).Trim()
         $promisor = (& git -C $configuredRoot config --get remote.origin.promisor 2>$null | Out-String).Trim()
-        if ($current -eq $vcpkgCommit -and $promisor -ne "true") {
+        if ($current -eq $vcpkgCommit -and $promisor -ne "true" -and
+            (Test-VcpkgToolVersion (Join-Path $configuredRoot "vcpkg.exe"))) {
             Write-Host "Using configured vcpkg at $configuredRoot ($current)."
             return $configuredRoot
         }
-        Write-Host "Configured vcpkg is incomplete, partial, or not at the required commit; using the persistent cache."
+        Write-Host "Configured vcpkg is incomplete, partial, outdated, or not at the required commit; using the persistent cache."
     }
 
     $localRoot = Join-Path $defaultToolCacheRoot "vcpkg"
@@ -337,10 +371,15 @@ function Get-VcpkgRoot {
             ""
         }
         if ($current -eq $vcpkgCommit -and (Test-Path -LiteralPath $cachedExe) -and $promisor -ne "true") {
-            Write-Host "Using cached vcpkg at $localRoot ($current)."
+            if (Test-VcpkgToolVersion $cachedExe) {
+                Write-Host "Using cached vcpkg at $localRoot ($current)."
+                return $localRoot
+            }
+            Write-Host "Updating the cached vcpkg tool for Visual Studio 2026 compatibility."
+            Update-VcpkgTool $localRoot
             return $localRoot
         }
-        Write-Host "Cached vcpkg is incomplete, partial, or not at the required commit; rebuilding."
+        Write-Host "Cached vcpkg is incomplete, partial, outdated, or not at the required commit; rebuilding."
         Remove-Directory $localRoot
     }
 
@@ -349,6 +388,7 @@ function Get-VcpkgRoot {
     Invoke-Checked "git" @("-C", $localRoot, "fetch", "--depth", "1", "origin", $vcpkgCommit)
     Invoke-Checked "git" @("-C", $localRoot, "checkout", "--force", $vcpkgCommit)
     Invoke-Checked (Join-Path $localRoot "bootstrap-vcpkg.bat") @("-disableMetrics")
+    Update-VcpkgTool $localRoot
     return $localRoot
 }
 
