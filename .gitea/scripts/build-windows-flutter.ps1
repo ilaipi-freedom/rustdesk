@@ -9,6 +9,10 @@ $packerRoot = Join-Path $buildRoot "portable-packer"
 $destination = "D:\work\YYM\release\jwvisdesk"
 $appName = "JwVisDesk"
 $appExecutable = "$appName.exe"
+$sourceRevision = (& git -C $repo rev-parse HEAD 2>$null | Out-String).Trim()
+if ([string]::IsNullOrWhiteSpace($sourceRevision)) {
+    $sourceRevision = "unknown"
+}
 
 $flutterVersion = "3.24.5"
 $rustVersion = "1.75"
@@ -618,6 +622,68 @@ function Add-PrinterDriver {
     }
 }
 
+function Validate-JwVisDeskBundle {
+    param(
+        [Parameter(Mandatory = $true)][string]$PortablePath,
+        [Parameter(Mandatory = $true)][string]$AppName
+    )
+
+    $requiredFiles = @(
+        (Join-Path $PortablePath "$AppName.exe"),
+        (Join-Path $PortablePath "librustdesk.dll"),
+        (Join-Path $PortablePath "jwvisdesk-config.json"),
+        (Join-Path $PortablePath "data\flutter_assets")
+    )
+    foreach ($requiredFile in $requiredFiles) {
+        if (-not (Test-Path -LiteralPath $requiredFile)) {
+            throw "JwVisDesk bundle is missing required file or directory: $requiredFile"
+        }
+    }
+
+    $sidecarPath = Join-Path $PortablePath "jwvisdesk-config.json"
+    try {
+        $sidecar = Get-Content -LiteralPath $sidecarPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "JwVisDesk sidecar is not valid JSON: $($_.Exception.Message)"
+    }
+    if ($sidecar.'app-name' -ne $AppName) {
+        throw "JwVisDesk sidecar app-name is '$($sidecar.'app-name')', expected '$AppName'."
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$sidecar.'network-config')) {
+        throw "JwVisDesk sidecar network-config is empty."
+    }
+    $lockedSettings = $sidecar.'override-settings'
+    foreach ($setting in @{
+        'access-mode' = 'full'
+        'enable-remote-printer' = 'N'
+        'enable-privacy-mode' = 'N'
+        'hide-network-settings' = 'Y'
+        'hide-server-settings' = 'Y'
+        'hide-proxy-settings' = 'Y'
+        'hide-websocket-settings' = 'Y'
+        'hide-remote-printer-settings' = 'Y'
+    }.GetEnumerator()) {
+        $settingProperty = $lockedSettings.PSObject.Properties[$setting.Key]
+        if ($null -eq $settingProperty -or [string]$settingProperty.Value -ne $setting.Value) {
+            throw "JwVisDesk sidecar setting '$($setting.Key)' is not locked to '$($setting.Value)'."
+        }
+    }
+
+    $officialExecutables = Get-ChildItem -LiteralPath $PortablePath -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -in @('rustdesk.exe', 'rustdesk-portable.exe') }
+    if ($null -ne $officialExecutables -and @($officialExecutables).Count -gt 0) {
+        throw "JwVisDesk bundle contains an official RustDesk executable: $($officialExecutables[0].FullName)"
+    }
+
+    $configHash = (Get-FileHash -LiteralPath $sidecarPath -Algorithm SHA256).Hash
+    $dllHash = (Get-FileHash -LiteralPath (Join-Path $PortablePath 'librustdesk.dll') -Algorithm SHA256).Hash
+    Write-Host "Validated JwVisDesk bundle at revision $sourceRevision."
+    Write-Host "  executable: $(Join-Path $PortablePath "$AppName.exe")"
+    Write-Host "  librustdesk.dll SHA256: $dllHash"
+    Write-Host "  sidecar SHA256: $configHash (network-config value not printed)"
+}
+
 try {
     if (-not [Environment]::Is64BitOperatingSystem) {
         throw "The Gitea worker must be a 64-bit Windows host."
@@ -735,6 +801,7 @@ try {
         "-AppName", $appName,
         "-SourceExecutable", $appExecutable
     )
+    Validate-JwVisDeskBundle $portable $appName
     Add-UsbDriver $portable $buildRoot
     Add-PrinterDriver $portable $buildRoot
 
@@ -796,6 +863,10 @@ try {
         "--app-name", $appName,
         "-d", $portable
     )
+    $generatedWix = Join-Path $msiRoot "Package\Components\RustDesk.wxs"
+    if (-not (Select-String -LiteralPath $generatedWix -Pattern "jwvisdesk-config\.json" -Quiet)) {
+        throw "MSI component generation did not include jwvisdesk-config.json."
+    }
     # Restoring the solution through NuGet's legacy MSBuild graph parser fails
     # on the VS2026 worker. Restore only the packages.config dependencies here;
     # the WiX SDK PackageReferences are restored by MSBuild during the build.
