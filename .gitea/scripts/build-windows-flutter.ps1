@@ -733,6 +733,13 @@ try {
     # so Cargo does not try to attach it to the root RustDesk workspace.
     $packerManifest = Join-Path $packerRoot "Cargo.toml"
     Add-Content -LiteralPath $packerManifest -Value "`r`n[workspace]`r`n"
+    # The worker's pinned Cargo may resolve target-specific packer dependencies
+    # differently from the root lockfile. Let this disposable checkout refresh
+    # its lockfile instead of failing the portable generation with --locked.
+    $packerGenerator = Join-Path $packerRoot "generate.py"
+    $generatorText = Get-Content -LiteralPath $packerGenerator -Raw
+    $generatorText = $generatorText.Replace('cmd = ["cargo", "build", "--locked", "--release"]', 'cmd = ["cargo", "build", "--release"]')
+    [IO.File]::WriteAllText($packerGenerator, $generatorText, [Text.UTF8Encoding]::new($false))
     Push-Location $packerRoot
     Invoke-Checked "python" @("-m", "pip", "install", "-r", (Join-Path $packerRoot "requirements.txt"))
     Invoke-Checked "python" @(
