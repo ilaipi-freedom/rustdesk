@@ -314,16 +314,38 @@ function Get-VcpkgRoot {
         (Test-Path -LiteralPath (Join-Path $configuredRoot ".git")) -and
         (Test-Path -LiteralPath (Join-Path $configuredRoot "vcpkg.exe"))) {
         $current = (& git -C $configuredRoot rev-parse HEAD 2>$null | Out-String).Trim()
-        if ($current -eq $vcpkgCommit) {
+        $promisor = (& git -C $configuredRoot config --get remote.origin.promisor 2>$null | Out-String).Trim()
+        if ($current -eq $vcpkgCommit -and $promisor -ne "true") {
             Write-Host "Using configured vcpkg at $configuredRoot ($current)."
             return $configuredRoot
         }
-        Write-Host "Configured vcpkg is not at the required commit; using a workspace-local copy."
+        Write-Host "Configured vcpkg is incomplete, partial, or not at the required commit; using the persistent cache."
     }
 
-    $localRoot = Join-Path $Root "vcpkg"
-    Remove-Directory $localRoot
-    Invoke-Checked "git" @("clone", "--filter=blob:none", "https://github.com/microsoft/vcpkg.git", $localRoot)
+    $localRoot = Join-Path $defaultToolCacheRoot "vcpkg"
+    if (Test-Path -LiteralPath $localRoot) {
+        $cachedGit = Join-Path $localRoot ".git"
+        $cachedExe = Join-Path $localRoot "vcpkg.exe"
+        $current = if (Test-Path -LiteralPath $cachedGit) {
+            (& git -C $localRoot rev-parse HEAD 2>$null | Out-String).Trim()
+        } else {
+            ""
+        }
+        $promisor = if (Test-Path -LiteralPath $cachedGit) {
+            (& git -C $localRoot config --get remote.origin.promisor 2>$null | Out-String).Trim()
+        } else {
+            ""
+        }
+        if ($current -eq $vcpkgCommit -and (Test-Path -LiteralPath $cachedExe) -and $promisor -ne "true") {
+            Write-Host "Using cached vcpkg at $localRoot ($current)."
+            return $localRoot
+        }
+        Write-Host "Cached vcpkg is incomplete, partial, or not at the required commit; rebuilding."
+        Remove-Directory $localRoot
+    }
+
+    New-Item -ItemType Directory -Path $defaultToolCacheRoot -Force | Out-Null
+    Invoke-Checked "git" @("clone", "--no-tags", "https://github.com/microsoft/vcpkg.git", $localRoot)
     Invoke-Checked "git" @("-C", $localRoot, "fetch", "--depth", "1", "origin", $vcpkgCommit)
     Invoke-Checked "git" @("-C", $localRoot, "checkout", "--force", $vcpkgCommit)
     Invoke-Checked (Join-Path $localRoot "bootstrap-vcpkg.bat") @("-disableMetrics")
