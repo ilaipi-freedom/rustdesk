@@ -14,6 +14,7 @@ $llvmVersion = "15.0.6"
 $cargoExpandVersion = "1.0.95"
 $bridgeVersion = "1.80.1"
 $nugetUri = "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
+$defaultToolCacheRoot = "C:\ProgramData\jwvisdesk-cache"
 $vcpkgCommit = "120deac3062162151622ca4860575a33844ba10b"
 $vcpkgTriplet = "x64-windows-static"
 $rustTarget = "x86_64-pc-windows-msvc"
@@ -79,7 +80,7 @@ function Initialize-RustToolchain {
 
     $configuredCache = $env:RUSTDESK_TOOL_CACHE
     $cacheRoot = if ([string]::IsNullOrWhiteSpace($configuredCache)) {
-        Join-Path $Root "tools\rust"
+        Join-Path $defaultToolCacheRoot "rust"
     } else {
         [Environment]::ExpandEnvironmentVariables($configuredCache)
     }
@@ -129,6 +130,25 @@ function Initialize-Flutter {
     if (Get-Command "flutter" -ErrorAction SilentlyContinue) {
         Write-Host "Using Flutter already available on PATH."
         return
+    }
+
+    $installedFlutterBins = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:RUSTDESK_FLUTTER_ROOT)) {
+        $installedFlutterBins += Join-Path ([Environment]::ExpandEnvironmentVariables($env:RUSTDESK_FLUTTER_ROOT)) "bin"
+    }
+    $installedFlutterBins += @(
+        "C:\ProgramData\jwzn\flutter\bin",
+        "C:\ProgramData\jwvisdesk\flutter\bin",
+        "C:\Flutter\bin",
+        "C:\tools\flutter\bin"
+    )
+    foreach ($installedFlutterBin in ($installedFlutterBins | Select-Object -Unique)) {
+        $installedFlutterCommand = Join-Path $installedFlutterBin "flutter.bat"
+        if (Test-Path -LiteralPath $installedFlutterCommand) {
+            Add-PathEntry $installedFlutterBin
+            Write-Host "Using preinstalled Flutter from $installedFlutterBin."
+            return
+        }
     }
 
     $flutterCache = Join-Path $Root "tools\flutter"
