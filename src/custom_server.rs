@@ -216,4 +216,18 @@ mod test {
             get_custom_server_from_string("rustdesk-licensed--0nI900VsFHZVBVdIlncwpHS4V0bOZ0dtVldrpVO4JHdCp0YV5WdzUGZzdnYRVjI6ISeltmIsISMuEjLx4SMiojI0N3boJye--.exe")
                 .unwrap(), lic);
     }
+
+    #[test]
+    fn test_network_config_round_trip() {
+        let source = CustomServer {
+            host: "id.example.test".to_owned(),
+            relay: "relay.example.test".to_owned(),
+            api: "https://api.example.test".to_owned(),
+            key: "server-public-key".to_owned(),
+        };
+        let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&source).unwrap());
+        let exported = encoded.chars().rev().collect::<String>();
+
+        assert_eq!(get_custom_server_from_string(&exported).unwrap(), source);
+    }
 }

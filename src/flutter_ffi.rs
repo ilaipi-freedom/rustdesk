@@ -49,6 +49,7 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
         crate::load_custom_client();
     } else {
         crate::read_custom_client(custom_client_config);
+        crate::load_jwvisdesk_config();
     }
     #[cfg(target_os = "android")]
     {

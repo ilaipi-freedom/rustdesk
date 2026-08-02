@@ -4,9 +4,11 @@ Set-StrictMode -Version Latest
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\")).Path
 $buildRoot = Join-Path $repo ".gitea-build"
 $stage = Join-Path $buildRoot "stage"
-$portable = Join-Path $stage "rustdesk-windows-x64-portable"
+$portable = Join-Path $stage "jwvisdesk-windows-x64-portable"
 $packerRoot = Join-Path $buildRoot "portable-packer"
 $destination = "D:\work\YYM\release\jwvisdesk"
+$appName = "JwVisDesk"
+$appExecutable = "$appName.exe"
 
 $flutterVersion = "3.24.5"
 $rustVersion = "1.75"
@@ -725,6 +727,13 @@ try {
     }
     New-Item -ItemType Directory -Path $portable -Force | Out-Null
     Copy-Item -Path (Join-Path $releaseSource "*") -Destination $portable -Recurse -Force
+    Invoke-Checked "powershell.exe" @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $PSScriptRoot "prepare-jwvisdesk.ps1"),
+        "-PortablePath", $portable,
+        "-AppName", $appName
+    )
     Add-UsbDriver $portable $buildRoot
     Add-PrinterDriver $portable $buildRoot
 
@@ -752,14 +761,14 @@ try {
         (Join-Path $packerRoot "generate.py"),
         "-f", $portable,
         "-o", $packerRoot,
-        "-e", (Join-Path $portable "rustdesk.exe")
+        "-e", (Join-Path $portable $appExecutable)
     )
     Pop-Location
     $packer = Join-Path $packerRoot "target\release\rustdesk-portable-packer.exe"
     if (-not (Test-Path -LiteralPath $packer)) {
         throw "Portable packer executable was not created."
     }
-    $portableExe = Join-Path $stage "rustdesk-windows-x64-portable.exe"
+    $portableExe = Join-Path $stage "jwvisdesk-windows-x64-portable.exe"
     Copy-Item -LiteralPath $packer -Destination $portableExe -Force
 
     $manifest = Join-Path $repo "res\manifest.xml"
@@ -779,7 +788,13 @@ try {
     }
     Write-Host "Building MSI from $msiSolution."
     Push-Location $msiRoot
-    Invoke-Checked "python" @((Join-Path $msiRoot "preprocess.py"), "--arp", "-d", $portable)
+    Invoke-Checked "python" @(
+        (Join-Path $msiRoot "preprocess.py"),
+        "--arp",
+        "--custom",
+        "--app-name", $appName,
+        "-d", $portable
+    )
     # Restoring the solution through NuGet's legacy MSBuild graph parser fails
     # on the VS2026 worker. Restore only the packages.config dependencies here;
     # the WiX SDK PackageReferences are restored by MSBuild during the build.
@@ -806,11 +821,11 @@ try {
     if ($null -eq $msi) {
         throw "MSI build completed without producing Package.msi."
     }
-    $msiOutput = Join-Path $stage "rustdesk-windows-x64.msi"
+    $msiOutput = Join-Path $stage "jwvisdesk-windows-x64.msi"
     Copy-Item -LiteralPath $msi.FullName -Destination $msiOutput -Force
 
-    if (-not (Test-Path -LiteralPath (Join-Path $portable "rustdesk.exe"))) {
-        throw "Portable executable missing from staged directory."
+    if (-not (Test-Path -LiteralPath (Join-Path $portable $appExecutable))) {
+        throw "$appExecutable missing from staged directory."
     }
     if (-not (Test-Path -LiteralPath $portableExe)) {
         throw "Portable self-extracted executable missing from staging."
@@ -821,7 +836,7 @@ try {
 
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
     Get-ChildItem -LiteralPath $destination -Force | Remove-Item -Recurse -Force
-    Copy-Item -LiteralPath $portable -Destination (Join-Path $destination "rustdesk-windows-x64-portable") -Recurse -Force
+    Copy-Item -LiteralPath $portable -Destination (Join-Path $destination "jwvisdesk-windows-x64-portable") -Recurse -Force
     Copy-Item -LiteralPath $portableExe -Destination $destination -Force
     Copy-Item -LiteralPath $msiOutput -Destination $destination -Force
 
