@@ -18,7 +18,7 @@ $sourceExecutable = Join-Path $PortablePath $SourceExecutable
 $appExecutable = "$AppName.exe"
 $targetExecutable = Join-Path $PortablePath $appExecutable
 if (-not (Test-Path -LiteralPath $sourceExecutable -PathType Leaf)) {
-    throw "Flutter Release output does not contain $SourceExecutable: $PortablePath"
+    throw "Flutter Release output does not contain ${SourceExecutable}: $PortablePath"
 }
 if ($sourceExecutable -ne $targetExecutable -and (Test-Path -LiteralPath $targetExecutable)) {
     Remove-Item -LiteralPath $targetExecutable -Force

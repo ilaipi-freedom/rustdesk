@@ -723,7 +723,7 @@ try {
 
     $releaseSource = Join-Path $repo "flutter\build\windows\x64\runner\Release"
     if (-not (Test-Path -LiteralPath (Join-Path $releaseSource $appExecutable))) {
-        throw "Flutter Release output does not contain $appExecutable: $releaseSource"
+        throw "Flutter Release output does not contain ${appExecutable}: $releaseSource"
     }
     New-Item -ItemType Directory -Path $portable -Force | Out-Null
     Copy-Item -Path (Join-Path $releaseSource "*") -Destination $portable -Recurse -Force
