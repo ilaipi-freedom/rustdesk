@@ -112,6 +112,7 @@ function Initialize-RustToolchain {
 
     Invoke-Checked $rustup @("toolchain", "install", $rustVersion, "--profile", "minimal")
     Invoke-Checked $rustup @("target", "add", $rustTarget, "--toolchain", $rustVersion)
+    Invoke-Checked $rustup @("component", "add", "rustfmt", "--toolchain", $rustVersion)
     Invoke-Checked "cargo" @("+$rustVersion", "--version")
     Write-Host "Using Rust $rustVersion from $cacheRoot."
 }
