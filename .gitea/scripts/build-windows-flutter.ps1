@@ -17,6 +17,7 @@ $vcpkgCommit = "120deac3062162151622ca4860575a33844ba10b"
 $vcpkgTriplet = "x64-windows-static"
 $rustTarget = "x86_64-pc-windows-msvc"
 $rustupUri = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
+$flutterUri = "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_${flutterVersion}-stable.zip"
 
 function Require-Command {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -107,6 +108,38 @@ function Remove-Directory {
     if (Test-Path -LiteralPath $Path) {
         Remove-Item -LiteralPath $Path -Recurse -Force
     }
+}
+
+function Initialize-Flutter {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    if (Get-Command "flutter" -ErrorAction SilentlyContinue) {
+        Write-Host "Using Flutter already available on PATH."
+        return
+    }
+
+    $flutterCache = Join-Path $Root "tools\flutter"
+    $flutterRoot = Join-Path $flutterCache "flutter"
+    $flutterBin = Join-Path $flutterRoot "bin"
+    $flutterCommand = Join-Path $flutterBin "flutter.bat"
+    $archive = Join-Path $flutterCache "flutter-$flutterVersion-windows-x64.zip"
+
+    New-Item -ItemType Directory -Path $flutterCache -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $flutterCommand)) {
+        if (-not (Test-Path -LiteralPath $archive)) {
+            Download-File $flutterUri $archive
+        }
+        Remove-Directory $flutterRoot
+        Expand-Archive -LiteralPath $archive -DestinationPath $flutterCache -Force
+    }
+    if (-not (Test-Path -LiteralPath $flutterCommand)) {
+        throw "Flutter $flutterVersion was not installed at $flutterCommand."
+    }
+
+    if ($env:Path -notlike "*$flutterBin*") {
+        $env:Path = "$flutterBin;$env:Path"
+    }
+    Write-Host "Using Flutter $flutterVersion from $flutterRoot."
 }
 
 function Get-VcpkgRoot {
@@ -263,6 +296,7 @@ try {
 
     New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
     Initialize-RustToolchain $buildRoot
+    Initialize-Flutter $buildRoot
 
     @("git", "python", "cargo", "rustup", "flutter", "clang", "cmake", "ninja", "msbuild", "nuget") | ForEach-Object {
         Require-Command $_
