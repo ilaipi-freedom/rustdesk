@@ -33,8 +33,18 @@ function Invoke-Checked {
     )
 
     Write-Host "> $FilePath $($Arguments -join ' ')"
-    & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
-    $exitCode = $LASTEXITCODE
+    # Windows PowerShell turns native stderr (including harmless warnings) into
+    # terminating errors when ErrorActionPreference is Stop. Preserve output and
+    # rely on the process exit code for command failure instead.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($exitCode -ne 0) {
         throw "Command failed with exit code $exitCode`: $FilePath $($Arguments -join ' ')"
     }
