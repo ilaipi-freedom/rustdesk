@@ -1,0 +1,18 @@
+name: Build Windows Flutter package
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build-windows-flutter:
+    runs-on: gitea-worker
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and publish package
+        shell: cmd
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .gitea\scripts\build-windows-flutter.ps1
