@@ -18,14 +18,9 @@ if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
 # directory even when the Flutter runner or a service reaches them first.
 $content = Get-Content -LiteralPath $configPath -Raw
 $old = 'pub static ref APP_NAME: RwLock<String> = RwLock::new("RustDesk".to_owned());'
-$new = @"
-#[cfg(target_os = "windows")]
-pub static ref APP_NAME: RwLock<String> = RwLock::new("JwVisDesk".to_owned());
-#[cfg(not(target_os = "windows"))]
-$old
-"@
+$new = 'pub static ref APP_NAME: RwLock<String> = RwLock::new(if cfg!(target_os = "windows") { "JwVisDesk".to_owned() } else { "RustDesk".to_owned() });'
 
-$alreadyPatched = $content -match [regex]::Escape('pub static ref APP_NAME: RwLock<String> = RwLock::new("JwVisDesk".to_owned());')
+$alreadyPatched = $content -match [regex]::Escape('pub static ref APP_NAME: RwLock<String> = RwLock::new(if cfg!(target_os = "windows") { "JwVisDesk".to_owned() } else { "RustDesk".to_owned() });')
 if ($alreadyPatched) {
     Write-Host "hbb_common APP_NAME is already initialized as JwVisDesk on Windows."
     exit 0
