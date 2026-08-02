@@ -879,6 +879,14 @@ try {
     if (-not (Select-String -LiteralPath $generatedWix -Pattern "jwvisdesk-config\.json" -Quiet)) {
         throw "MSI component generation did not include jwvisdesk-config.json."
     }
+    if (Select-String -LiteralPath $generatedWix -Pattern "(?i)(^|[\\/])rustdesk\.exe$|librustdesk\.dll" -Quiet) {
+        throw "MSI component generation still contains an official RustDesk executable or core DLL."
+    }
+    $includesWix = Join-Path $msiRoot "Package\Includes.wxi"
+    $includesWixText = Get-Content -LiteralPath $includesWix -Raw
+    if ($includesWixText -notmatch 'Product="JwVisDesk"') {
+        throw "MSI package identity is not JwVisDesk."
+    }
     # Restoring the solution through NuGet's legacy MSBuild graph parser fails
     # on the VS2026 worker. Restore only the packages.config dependencies here;
     # the WiX SDK PackageReferences are restored by MSBuild during the build.

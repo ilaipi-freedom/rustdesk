@@ -20,7 +20,8 @@ $content = Get-Content -LiteralPath $configPath -Raw
 $old = 'pub static ref APP_NAME: RwLock<String> = RwLock::new("RustDesk".to_owned());'
 $new = 'pub static ref APP_NAME: RwLock<String> = RwLock::new(if cfg!(target_os = "windows") { "JwVisDesk".to_owned() } else { "RustDesk".to_owned() });'
 
-$alreadyPatched = $content -match [regex]::Escape('pub static ref APP_NAME: RwLock<String> = RwLock::new(if cfg!(target_os = "windows") { "JwVisDesk".to_owned() } else { "RustDesk".to_owned() });')
+$expected = 'pub static ref APP_NAME: RwLock<String> = RwLock::new(if cfg!(target_os = "windows") { "JwVisDesk".to_owned() } else { "RustDesk".to_owned() });'
+$alreadyPatched = $content -match [regex]::Escape($expected)
 if ($alreadyPatched) {
     Write-Host "hbb_common APP_NAME is already initialized as JwVisDesk on Windows."
     exit 0
@@ -33,4 +34,8 @@ if ($occurrences.Count -ne 1) {
 
 $patched = $content.Replace($old, $new)
 [IO.File]::WriteAllText($configPath, $patched, [Text.UTF8Encoding]::new($false))
-Write-Host "Patched hbb_common APP_NAME default to JwVisDesk for Windows."
+$verified = Get-Content -LiteralPath $configPath -Raw
+if ($verified -notmatch [regex]::Escape($expected)) {
+    throw "hbb_common APP_NAME identity patch did not persist: $configPath"
+}
+Write-Host "Patched and verified hbb_common APP_NAME default as JwVisDesk for Windows."

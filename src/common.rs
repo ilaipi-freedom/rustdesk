@@ -1003,11 +1003,22 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
 
 #[inline]
 pub fn get_app_name() -> String {
+    // The Windows artifact is a separate product, not an upstream custom
+    // client whose identity can be changed at runtime.  Keep every Windows
+    // path that derives from the product name (service, registry, IPC, URI,
+    // and config file names) isolated even if an old custom-client payload or
+    // a stale process writes RustDesk into the shared APP_NAME lock.
+    #[cfg(target_os = "windows")]
+    return JWVISDESK_APP_NAME.to_owned();
+
     hbb_common::config::APP_NAME.read().unwrap().clone()
 }
 
 #[inline]
 pub fn is_rustdesk() -> bool {
+    #[cfg(target_os = "windows")]
+    return false;
+
     hbb_common::config::APP_NAME.read().unwrap().eq("RustDesk")
 }
 
@@ -2790,6 +2801,25 @@ mod tests {
     };
 
     static JWVISDESK_CONFIG_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_product_identity_is_not_mutable() {
+        let _test_guard = JWVISDESK_CONFIG_TEST_MUTEX.lock().unwrap();
+        let _restore = JwVisDeskConfigRestore {
+            app_name: hbb_common::config::APP_NAME.read().unwrap().clone(),
+            overwrite_settings: hbb_common::config::OVERWRITE_SETTINGS
+                .read()
+                .unwrap()
+                .clone(),
+            builtin_settings: hbb_common::config::BUILTIN_SETTINGS.read().unwrap().clone(),
+        };
+
+        *hbb_common::config::APP_NAME.write().unwrap() = "RustDesk".to_owned();
+
+        assert_eq!(get_app_name(), JWVISDESK_APP_NAME);
+        assert!(!is_rustdesk());
+    }
 
     #[test]
     fn jwvisdesk_runtime_defaults_are_isolated_before_sidecar_load() {

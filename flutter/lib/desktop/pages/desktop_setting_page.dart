@@ -70,14 +70,15 @@ class DesktopSettingPage extends StatefulWidget {
             !bind.isDisableSettings() &&
             bind.mainGetBuildinOption(key: kOptionHideSecuritySetting) != 'Y')
           SettingsTabKey.safety,
-        if (!bind.isDisableSettings() &&
+        if (!isWindows &&
+            !bind.isDisableSettings() &&
             bind.mainGetBuildinOption(key: kOptionHideNetworkSetting) != 'Y')
           SettingsTabKey.network,
         if (!bind.isIncomingOnly()) SettingsTabKey.display,
         if (!isWeb && !bind.isIncomingOnly() && bind.pluginFeatureIsEnabled())
           SettingsTabKey.plugin,
         if (!bind.isDisableAccount()) SettingsTabKey.account,
-        if (isWindows &&
+        if (!isWindows &&
             bind.mainGetBuildinOption(key: kOptionHideRemotePrinterSetting) !=
                 'Y')
           SettingsTabKey.printer,
@@ -1670,6 +1671,12 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   }
 
   Widget network(BuildContext context) {
+    // JwVisDesk's Windows product policy has no user-editable network page.
+    // Keep this guard in the widget as well as in tabKeys so a deep link or a
+    // stale selected-tab index cannot expose the page.
+    if (isWindows) {
+      return Offstage();
+    }
     final hideNetwork =
         bind.mainGetBuildinOption(key: kOptionHideNetworkSetting) == 'Y';
     final hideServer =
