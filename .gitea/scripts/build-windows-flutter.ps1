@@ -724,6 +724,10 @@ try {
 
     New-Item -ItemType Directory -Path $packerRoot -Force | Out-Null
     Copy-Item -Path (Join-Path $repo "libs\portable\*") -Destination $packerRoot -Recurse -Force
+    # libs/portable/Cargo.lock is a historical standalone lockfile. The
+    # current crate is locked by the repository workspace, so use that lock
+    # when building the generated standalone checkout.
+    Copy-Item -LiteralPath (Join-Path $repo "Cargo.lock") -Destination (Join-Path $packerRoot "Cargo.lock") -Force
     # The copied packer lives below the repository workspace, but it is built
     # as a standalone crate. Mark this generated checkout as its own workspace
     # so Cargo does not try to attach it to the root RustDesk workspace.
