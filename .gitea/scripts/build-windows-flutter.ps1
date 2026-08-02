@@ -763,7 +763,8 @@ try {
     $msiSolution = Join-Path $msiRoot "msi.sln"
     $msiProjects = @(
         (Join-Path $msiRoot "Package\Package.wixproj"),
-        (Join-Path $msiRoot "CustomActions\CustomActions.vcxproj")
+        (Join-Path $msiRoot "CustomActions\CustomActions.vcxproj"),
+        (Join-Path $msiRoot "CustomActions\packages.config")
     )
     foreach ($msiPath in @($msiSolution) + $msiProjects) {
         if (-not (Test-Path -LiteralPath $msiPath)) {
@@ -773,7 +774,13 @@ try {
     Write-Host "Building MSI from $msiSolution."
     Push-Location $msiRoot
     Invoke-Checked "python" @((Join-Path $msiRoot "preprocess.py"), "--arp", "-d", $portable)
-    Invoke-Checked "nuget" @("restore", $msiSolution)
+    # Restoring the solution through NuGet's legacy MSBuild graph parser fails
+    # on the VS2026 worker. Restore only the packages.config dependencies here;
+    # the WiX SDK PackageReferences are restored by MSBuild during the build.
+    Invoke-Checked "nuget" @(
+        "restore", (Join-Path $msiRoot "CustomActions\packages.config"),
+        "-PackagesDirectory", (Join-Path $msiRoot "packages")
+    )
     Invoke-Checked "msbuild" @($msiSolution, "-p:Configuration=Release", "-p:Platform=x64", "/p:TargetVersion=Windows10")
     Pop-Location
 
