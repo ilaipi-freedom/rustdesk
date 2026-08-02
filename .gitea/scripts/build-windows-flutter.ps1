@@ -759,10 +759,22 @@ try {
     $manifest = Join-Path $repo "res\manifest.xml"
     $manifestText = Get-Content -LiteralPath $manifest -Raw
     Set-Content -LiteralPath $manifest -Value ($manifestText -replace "(?m)^.*dpiAware.*\r?\n", "") -NoNewline
-    Push-Location (Join-Path $repo "res\msi")
-    Invoke-Checked "python" @("preprocess.py", "--arp", "-d", $portable)
-    Invoke-Checked "nuget" @("restore", "msi.sln")
-    Invoke-Checked "msbuild" @("msi.sln", "-p:Configuration=Release", "-p:Platform=x64", "/p:TargetVersion=Windows10")
+    $msiRoot = Join-Path $repo "res\msi"
+    $msiSolution = Join-Path $msiRoot "msi.sln"
+    $msiProjects = @(
+        (Join-Path $msiRoot "Package\Package.wixproj"),
+        (Join-Path $msiRoot "CustomActions\CustomActions.vcxproj")
+    )
+    foreach ($msiPath in @($msiSolution) + $msiProjects) {
+        if (-not (Test-Path -LiteralPath $msiPath)) {
+            throw "MSI source file was not found: $msiPath"
+        }
+    }
+    Write-Host "Building MSI from $msiSolution."
+    Push-Location $msiRoot
+    Invoke-Checked "python" @((Join-Path $msiRoot "preprocess.py"), "--arp", "-d", $portable)
+    Invoke-Checked "nuget" @("restore", $msiSolution)
+    Invoke-Checked "msbuild" @($msiSolution, "-p:Configuration=Release", "-p:Platform=x64", "/p:TargetVersion=Windows10")
     Pop-Location
 
     $msi = Get-ChildItem -LiteralPath (Join-Path $repo "res\msi\Package\bin") -File -Recurse |
