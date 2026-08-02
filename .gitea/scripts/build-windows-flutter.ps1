@@ -251,7 +251,7 @@ try {
     Invoke-Checked "rustup" @("target", "add", $rustTarget, "--toolchain", $rustVersion)
     $env:RUSTUP_TOOLCHAIN = $rustVersion
     $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
-    if ((Test-Path -LiteralPath $cargoBin) -and $env:Path -notlike "*$cargoBin*") {
+    if ($env:Path -notlike "*$cargoBin*") {
         $env:Path = "$cargoBin;$env:Path"
     }
     $env:VCPKG_DEFAULT_TRIPLET = $vcpkgTriplet
