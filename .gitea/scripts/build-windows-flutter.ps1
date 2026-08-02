@@ -724,6 +724,11 @@ try {
 
     New-Item -ItemType Directory -Path $packerRoot -Force | Out-Null
     Copy-Item -Path (Join-Path $repo "libs\portable\*") -Destination $packerRoot -Recurse -Force
+    # The copied packer lives below the repository workspace, but it is built
+    # as a standalone crate. Mark this generated checkout as its own workspace
+    # so Cargo does not try to attach it to the root RustDesk workspace.
+    $packerManifest = Join-Path $packerRoot "Cargo.toml"
+    Add-Content -LiteralPath $packerManifest -Value "`r`n[workspace]`r`n"
     Push-Location $packerRoot
     Invoke-Checked "python" @("-m", "pip", "install", "-r", (Join-Path $packerRoot "requirements.txt"))
     Invoke-Checked "python" @(
