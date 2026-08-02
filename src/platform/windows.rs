@@ -105,7 +105,9 @@ pub use acl::{
     validate_path_for_portable_service_shmem_dir,
 };
 
-pub const FLUTTER_RUNNER_WIN32_WINDOW_CLASS: &'static str = "FLUTTER_RUNNER_WIN32_WINDOW"; // main window, install window
+// Keep the URI/single-instance lookup isolated from the official RustDesk
+// runner. The C++ Flutter runner registers the same class name.
+pub const FLUTTER_RUNNER_WIN32_WINDOW_CLASS: &'static str = "JWVISDESK_FLUTTER_RUNNER_WIN32_WINDOW"; // main window, install window
 pub const EXPLORER_EXE: &'static str = "explorer.exe";
 pub const SET_FOREGROUND_WINDOW: &'static str = "SET_FOREGROUND_WINDOW";
 

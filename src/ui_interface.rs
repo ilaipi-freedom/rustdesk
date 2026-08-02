@@ -211,6 +211,15 @@ pub fn use_texture_render() -> bool {
 
 #[inline]
 pub fn is_option_fixed(key: &str) -> bool {
+    if [
+        config::keys::OPTION_ACCESS_MODE,
+        config::keys::OPTION_ENABLE_REMOTE_PRINTER,
+        config::keys::OPTION_ENABLE_PRIVACY_MODE,
+    ]
+    .contains(&key)
+    {
+        return true;
+    }
     config::OVERWRITE_DISPLAY_SETTINGS
         .read()
         .unwrap()
