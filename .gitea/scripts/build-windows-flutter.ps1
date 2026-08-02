@@ -276,8 +276,10 @@ function Initialize-WindowsBuildTools {
                 Get-ChildItem -LiteralPath $_.FullName -Directory -ErrorAction SilentlyContinue |
                     ForEach-Object {
                         $toolDirectories += Join-Path $_.FullName "Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja"
-                        $toolDirectories += Join-Path $_.FullName "MSBuild\Current\Bin\amd64"
                         $toolDirectories += Join-Path $_.FullName "MSBuild\Current\Bin"
+                        # The runner workspace lives below System32; use 64-bit
+                        # MSBuild so Windows file-system redirection cannot hide it.
+                        $toolDirectories += Join-Path $_.FullName "MSBuild\Current\Bin\amd64"
                     }
             }
     }
@@ -294,7 +296,11 @@ function Initialize-WindowsBuildTools {
         Write-Host "Using Ninja from $((Get-Command ninja).Source)."
     }
     if (Get-Command "msbuild" -ErrorAction SilentlyContinue) {
-        Write-Host "Using MSBuild from $((Get-Command msbuild).Source)."
+        $msbuildPath = (Get-Command msbuild).Source
+        if ($msbuildPath -notmatch "(?i)\\amd64\\MSBuild\.exe$") {
+            throw "64-bit MSBuild is required, but PATH resolved to $msbuildPath."
+        }
+        Write-Host "Using 64-bit MSBuild from $msbuildPath."
     }
 }
 
