@@ -157,4 +157,3 @@
 - [ ] **Step 3: Document runner-only verification**
 
   Report that actual compilation must be tested by manually dispatching the Gitea workflow on `gitea-worker`; record the first failure's missing tool or path and adjust only the script's prerequisite/path handling.
-
