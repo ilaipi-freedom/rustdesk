@@ -2392,15 +2392,6 @@ pub fn get_hwid() -> Bytes {
 
 #[inline]
 pub fn get_builtin_option(key: &str) -> String {
-    let configured = config::BUILTIN_SETTINGS
-        .read()
-        .unwrap()
-        .get(key)
-        .cloned()
-        .unwrap_or_default();
-    if !configured.is_empty() {
-        return configured;
-    }
     if get_app_name() == JWVISDESK_APP_NAME
         && [
             keys::OPTION_HIDE_NETWORK_SETTINGS,
@@ -2412,6 +2403,15 @@ pub fn get_builtin_option(key: &str) -> String {
         .contains(&key)
     {
         return "Y".to_owned();
+    }
+    let configured = config::BUILTIN_SETTINGS
+        .read()
+        .unwrap()
+        .get(key)
+        .cloned()
+        .unwrap_or_default();
+    if !configured.is_empty() {
+        return configured;
     }
     String::new()
 }
@@ -2843,6 +2843,29 @@ mod tests {
             get_builtin_option(keys::OPTION_HIDE_REMOTE_PRINTER_SETTINGS),
             "Y"
         );
+    }
+
+    #[test]
+    fn jwvisdesk_locked_hidden_settings_cannot_be_overridden() {
+        let _test_guard = JWVISDESK_CONFIG_TEST_MUTEX.lock().unwrap();
+        let _restore = JwVisDeskConfigRestore {
+            app_name: hbb_common::config::APP_NAME.read().unwrap().clone(),
+            overwrite_settings: hbb_common::config::OVERWRITE_SETTINGS
+                .read()
+                .unwrap()
+                .clone(),
+            builtin_settings: hbb_common::config::BUILTIN_SETTINGS.read().unwrap().clone(),
+        };
+        *hbb_common::config::APP_NAME.write().unwrap() = "JwVisDesk".to_owned();
+        hbb_common::config::BUILTIN_SETTINGS
+            .write()
+            .unwrap()
+            .insert(
+                keys::OPTION_HIDE_NETWORK_SETTINGS.to_owned(),
+                "N".to_owned(),
+            );
+
+        assert_eq!(get_builtin_option(keys::OPTION_HIDE_NETWORK_SETTINGS), "Y");
     }
 
     struct JwVisDeskConfigRestore {
