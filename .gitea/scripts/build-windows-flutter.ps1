@@ -11,7 +11,6 @@ $destination = "D:\work\YYM\release\jwvisdesk"
 $flutterVersion = "3.24.5"
 $rustVersion = "1.75"
 $llvmVersion = "15.0.6"
-$llvmUri = "https://github.com/llvm/llvm-project/releases/download/llvmorg-${llvmVersion}/LLVM-${llvmVersion}-win64.exe"
 $cargoExpandVersion = "1.0.95"
 $bridgeVersion = "1.80.1"
 $vcpkgCommit = "120deac3062162151622ca4860575a33844ba10b"
@@ -188,70 +187,7 @@ function Initialize-Llvm {
         }
     }
 
-    $llvmCache = Join-Path $Root "tools\llvm"
-    $llvmInstaller = Join-Path $llvmCache "LLVM-$llvmVersion-win64.exe"
-    $llvmBin = Join-Path $llvmCache "bin"
-    $llvmInstallerCandidates = @()
-    if (-not [string]::IsNullOrWhiteSpace($env:RUSTDESK_LLVM_INSTALLER)) {
-        $llvmInstallerCandidates += [Environment]::ExpandEnvironmentVariables($env:RUSTDESK_LLVM_INSTALLER)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
-        $llvmInstallerCandidates += Join-Path $env:USERPROFILE "Downloads\LLVM-$llvmVersion-win64.exe"
-    }
-    $llvmInstallerCandidates += "C:\Users\Smark\Downloads\LLVM-$llvmVersion-win64.exe"
-
-    New-Item -ItemType Directory -Path $llvmCache -Force | Out-Null
-    if (-not (Test-Path -LiteralPath (Join-Path $llvmBin "clang.exe"))) {
-        if (-not (Test-Path -LiteralPath $llvmInstaller)) {
-            $localInstaller = $llvmInstallerCandidates |
-                Where-Object { Test-Path -LiteralPath $_ } |
-                Select-Object -First 1
-            if (-not [string]::IsNullOrWhiteSpace($localInstaller)) {
-                $llvmInstaller = $localInstaller
-                Write-Host "Using local LLVM installer $llvmInstaller."
-            } else {
-                Download-File $llvmUri $llvmInstaller
-            }
-        }
-        Write-Host "> $llvmInstaller /S /D=$llvmCache"
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            & $llvmInstaller "/S" "/D=$llvmCache" 2>&1 | ForEach-Object { Write-Host $_ }
-            $llvmExitCode = $LASTEXITCODE
-        }
-        finally {
-            $ErrorActionPreference = $previousErrorActionPreference
-        }
-        if ($llvmExitCode -ne 0) {
-            Write-Warning "LLVM installer returned exit code $llvmExitCode; checking known install locations."
-        }
-    }
-
-    # LLVM's Windows installer may ignore /D and use its default Program Files path.
-    $postInstallCandidates = @(
-        $llvmBin,
-        "C:\Program Files\LLVM\bin",
-        "C:\Program Files (x86)\LLVM\bin",
-        "C:\LLVM\bin"
-    )
-    if (-not [string]::IsNullOrWhiteSpace($env:LLVM_ROOT)) {
-        $postInstallCandidates += $env:LLVM_ROOT
-        $postInstallCandidates += Join-Path $env:LLVM_ROOT "bin"
-    }
-    $postInstallCandidates += Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Directory -ErrorAction SilentlyContinue |
-        ForEach-Object { Join-Path $_.FullName "VC\Tools\Llvm\x64\bin" }
-    $installedBin = $postInstallCandidates |
-        Select-Object -Unique |
-        Where-Object { Test-Path -LiteralPath (Join-Path $_ "clang.exe") } |
-        Select-Object -First 1
-    if ([string]::IsNullOrWhiteSpace($installedBin)) {
-        throw "LLVM $llvmVersion was not installed; clang.exe was not found in: $($postInstallCandidates -join '; ')"
-    }
-    if ($env:Path -notlike "*$installedBin*") {
-        $env:Path = "$installedBin;$env:Path"
-    }
-    Write-Host "Using LLVM $llvmVersion from $installedBin."
+    throw "LLVM $llvmVersion was not found. Install it for all users or set LLVM_ROOT to its installation directory. Checked: $($llvmBinCandidates -join '; ')"
 }
 
 function Get-VcpkgRoot {
