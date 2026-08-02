@@ -531,6 +531,10 @@ try {
     $vcpkgRoot = Get-VcpkgRoot $buildRoot
     $env:VCPKG_ROOT = $vcpkgRoot
     $vcpkg = Join-Path $vcpkgRoot "vcpkg.exe"
+    if ([string]::IsNullOrWhiteSpace($env:VCPKG_MAX_CONCURRENCY)) {
+        $env:VCPKG_MAX_CONCURRENCY = "1"
+    }
+    Write-Host "Using vcpkg concurrency limit $env:VCPKG_MAX_CONCURRENCY."
     try {
         Push-Location $repo
         Invoke-Checked $vcpkg @("install", "--triplet", $vcpkgTriplet, "--x-install-root=$(Join-Path $vcpkgRoot 'installed')")
