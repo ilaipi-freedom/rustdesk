@@ -13,6 +13,7 @@ $rustVersion = "1.75"
 $llvmVersion = "15.0.6"
 $cargoExpandVersion = "1.0.95"
 $bridgeVersion = "1.80.1"
+$nugetUri = "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
 $vcpkgCommit = "120deac3062162151622ca4860575a33844ba10b"
 $vcpkgTriplet = "x64-windows-static"
 $rustTarget = "x86_64-pc-windows-msvc"
@@ -24,6 +25,18 @@ function Require-Command {
 
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "Required command '$Name' was not found on PATH."
+    }
+}
+
+function Add-PathEntry {
+    param([Parameter(Mandatory = $true)][string]$Directory)
+
+    if (-not (Test-Path -LiteralPath $Directory)) {
+        return
+    }
+    $entries = @($env:Path -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($entries -notcontains $Directory) {
+        $env:Path = "$Directory;$env:Path"
     }
 }
 
@@ -190,6 +203,88 @@ function Initialize-Llvm {
     throw "LLVM $llvmVersion was not found. Install it for all users or set LLVM_ROOT to its installation directory. Checked: $($llvmBinCandidates -join '; ')"
 }
 
+function Initialize-WindowsBuildTools {
+    $toolDirectories = @(
+        "C:\Program Files\CMake\bin",
+        "C:\Program Files (x86)\CMake\bin"
+    )
+    $visualStudioRoots = @(
+        (Join-Path $env:ProgramFiles "Microsoft Visual Studio"),
+        (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio")
+    ) | Where-Object { Test-Path -LiteralPath $_ }
+
+    foreach ($visualStudioRoot in $visualStudioRoots) {
+        Get-ChildItem -LiteralPath $visualStudioRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                Get-ChildItem -LiteralPath $_.FullName -Directory -ErrorAction SilentlyContinue |
+                    ForEach-Object {
+                        $toolDirectories += Join-Path $_.FullName "Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja"
+                        $toolDirectories += Join-Path $_.FullName "MSBuild\Current\Bin\amd64"
+                        $toolDirectories += Join-Path $_.FullName "MSBuild\Current\Bin"
+                    }
+            }
+    }
+
+    foreach ($toolDirectory in ($toolDirectories | Select-Object -Unique)) {
+        if ((Test-Path -LiteralPath (Join-Path $toolDirectory "cmake.exe")) -or
+            (Test-Path -LiteralPath (Join-Path $toolDirectory "ninja.exe")) -or
+            (Test-Path -LiteralPath (Join-Path $toolDirectory "MSBuild.exe"))) {
+            Add-PathEntry $toolDirectory
+        }
+    }
+
+    if (Get-Command "ninja" -ErrorAction SilentlyContinue) {
+        Write-Host "Using Ninja from $((Get-Command ninja).Source)."
+    }
+    if (Get-Command "msbuild" -ErrorAction SilentlyContinue) {
+        Write-Host "Using MSBuild from $((Get-Command msbuild).Source)."
+    }
+}
+
+function Initialize-NuGet {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    if (Get-Command "nuget" -ErrorAction SilentlyContinue) {
+        Write-Host "Using NuGet already available on PATH."
+        return
+    }
+
+    $nugetCache = Join-Path $Root "tools\nuget"
+    $nugetPath = Join-Path $nugetCache "nuget.exe"
+    New-Item -ItemType Directory -Path $nugetCache -Force | Out-Null
+
+    $nugetCandidates = @(
+        "C:\Program Files\NuGet\nuget.exe",
+        "C:\Program Files (x86)\NuGet\nuget.exe",
+        "C:\ProgramData\NuGet\nuget.exe"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($env:RUSTDESK_NUGET_EXE)) {
+        $nugetCandidates += [Environment]::ExpandEnvironmentVariables($env:RUSTDESK_NUGET_EXE)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $nugetCandidates += Join-Path $env:USERPROFILE "Downloads\nuget.exe"
+    }
+    $nugetCandidates += "C:\Users\Smark\Downloads\nuget.exe"
+
+    if (-not (Test-Path -LiteralPath $nugetPath)) {
+        $localNuGet = $nugetCandidates |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+        if (-not [string]::IsNullOrWhiteSpace($localNuGet)) {
+            Copy-Item -LiteralPath $localNuGet -Destination $nugetPath -Force
+            Write-Host "Using local NuGet executable $localNuGet."
+        } else {
+            Download-File $nugetUri $nugetPath
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $nugetPath)) {
+        throw "NuGet executable was not installed at $nugetPath."
+    }
+    Add-PathEntry $nugetCache
+    Write-Host "Using NuGet from $nugetPath."
+}
+
 function Get-VcpkgRoot {
     param([Parameter(Mandatory = $true)][string]$Root)
 
@@ -346,6 +441,8 @@ try {
     Initialize-RustToolchain $buildRoot
     Initialize-Flutter $buildRoot
     Initialize-Llvm $buildRoot
+    Initialize-WindowsBuildTools
+    Initialize-NuGet $buildRoot
 
     @("git", "python", "cargo", "rustup", "flutter", "clang", "cmake", "ninja", "msbuild", "nuget") | ForEach-Object {
         Require-Command $_
