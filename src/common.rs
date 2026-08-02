@@ -2140,6 +2140,7 @@ pub fn initialize_jwvisdesk_defaults() {
     let mut builtin = config::BUILTIN_SETTINGS.write().unwrap();
     for key in [
         keys::OPTION_HIDE_NETWORK_SETTINGS,
+        keys::OPTION_HIDE_SECURITY_SETTINGS,
         keys::OPTION_HIDE_SERVER_SETTINGS,
         keys::OPTION_HIDE_PROXY_SETTINGS,
         keys::OPTION_HIDE_WEBSOCKET_SETTINGS,
@@ -2327,6 +2328,7 @@ fn apply_jwvisdesk_config_data(mut data: serde_json::Map<String, Value>) {
         ("access-mode", "full"),
         ("enable-remote-printer", "N"),
         ("hide-network-settings", "Y"),
+        ("hide-security-settings", "Y"),
         ("hide-server-settings", "Y"),
         ("hide-proxy-settings", "Y"),
         ("hide-websocket-settings", "Y"),
@@ -2408,6 +2410,7 @@ pub fn get_builtin_option(key: &str) -> String {
     // the network or remote-printer pages.
     if [
         keys::OPTION_HIDE_NETWORK_SETTINGS,
+        keys::OPTION_HIDE_SECURITY_SETTINGS,
         keys::OPTION_HIDE_SERVER_SETTINGS,
         keys::OPTION_HIDE_PROXY_SETTINGS,
         keys::OPTION_HIDE_WEBSOCKET_SETTINGS,
@@ -2865,6 +2868,7 @@ mod tests {
             Some(&"N".to_owned())
         );
         assert_eq!(get_builtin_option(keys::OPTION_HIDE_NETWORK_SETTINGS), "Y");
+        assert_eq!(get_builtin_option(keys::OPTION_HIDE_SECURITY_SETTINGS), "Y");
         assert_eq!(get_builtin_option(keys::OPTION_HIDE_SERVER_SETTINGS), "Y");
         assert_eq!(get_builtin_option(keys::OPTION_HIDE_PROXY_SETTINGS), "Y");
         assert_eq!(
@@ -3027,6 +3031,7 @@ mod tests {
             Some(&"N".to_owned())
         );
         for key in [
+            "hide-security-settings",
             "hide-server-settings",
             "hide-proxy-settings",
             "hide-websocket-settings",

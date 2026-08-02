@@ -35,6 +35,7 @@ $config = [ordered]@{
         "enable-remote-printer" = "N"
         "enable-privacy-mode" = "N"
         "hide-network-settings" = "Y"
+        "hide-security-settings" = "Y"
         "hide-server-settings" = "Y"
         "hide-proxy-settings" = "Y"
         "hide-websocket-settings" = "Y"
