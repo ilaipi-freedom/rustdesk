@@ -223,20 +223,35 @@ function Initialize-Llvm {
         finally {
             $ErrorActionPreference = $previousErrorActionPreference
         }
-        if ($llvmExitCode -ne 0 -and -not (Test-Path -LiteralPath (Join-Path $llvmBin "clang.exe"))) {
-            throw "LLVM installer failed with exit code ${llvmExitCode}: $llvmInstaller"
-        }
         if ($llvmExitCode -ne 0) {
-            Write-Warning "LLVM installer returned exit code $llvmExitCode, but clang.exe is present; continuing."
+            Write-Warning "LLVM installer returned exit code $llvmExitCode; checking known install locations."
         }
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $llvmBin "clang.exe"))) {
-        throw "LLVM $llvmVersion was not installed at $llvmBin."
+
+    # LLVM's Windows installer may ignore /D and use its default Program Files path.
+    $postInstallCandidates = @(
+        $llvmBin,
+        "C:\Program Files\LLVM\bin",
+        "C:\Program Files (x86)\LLVM\bin",
+        "C:\LLVM\bin"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($env:LLVM_ROOT)) {
+        $postInstallCandidates += $env:LLVM_ROOT
+        $postInstallCandidates += Join-Path $env:LLVM_ROOT "bin"
     }
-    if ($env:Path -notlike "*$llvmBin*") {
-        $env:Path = "$llvmBin;$env:Path"
+    $postInstallCandidates += Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName "VC\Tools\Llvm\x64\bin" }
+    $installedBin = $postInstallCandidates |
+        Select-Object -Unique |
+        Where-Object { Test-Path -LiteralPath (Join-Path $_ "clang.exe") } |
+        Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($installedBin)) {
+        throw "LLVM $llvmVersion was not installed; clang.exe was not found in: $($postInstallCandidates -join '; ')"
     }
-    Write-Host "Using LLVM $llvmVersion from $llvmCache."
+    if ($env:Path -notlike "*$installedBin*") {
+        $env:Path = "$installedBin;$env:Path"
+    }
+    Write-Host "Using LLVM $llvmVersion from $installedBin."
 }
 
 function Get-VcpkgRoot {
