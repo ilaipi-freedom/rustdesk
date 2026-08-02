@@ -787,7 +787,17 @@ try {
         "restore", (Join-Path $msiRoot "CustomActions\packages.config"),
         "-PackagesDirectory", (Join-Path $msiRoot "packages")
     )
-    Invoke-Checked "msbuild" @($msiSolution, "-p:Configuration=Release", "-p:Platform=x64", "/p:TargetVersion=Windows10")
+    # Restore the WiX SDK PackageReferences before building the solution. The
+    # runner only has the VS18 C++ toolset, while the project keeps v143 for
+    # compatibility with the upstream Windows workflow.
+    Invoke-Checked "msbuild" @(
+        $msiSolution,
+        "/restore",
+        "-p:Configuration=Release",
+        "-p:Platform=x64",
+        "/p:TargetVersion=Windows10",
+        "/p:PlatformToolset=v180"
+    )
     Pop-Location
 
     $msi = Get-ChildItem -LiteralPath (Join-Path $repo "res\msi\Package\bin") -File -Recurse |
