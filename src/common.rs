@@ -55,6 +55,8 @@ pub type NotifyMessageBox = fn(String, String, String, String) -> dyn Future<Out
 // the executable name of the portable version
 pub const PORTABLE_APPNAME_RUNTIME_ENV_KEY: &str = "RUSTDESK_APPNAME";
 
+const JWVISDESK_APP_NAME: &str = "JwVisDesk";
+
 pub const PLATFORM_WINDOWS: &str = "Windows";
 pub const PLATFORM_LINUX: &str = "Linux";
 pub const PLATFORM_MACOS: &str = "Mac OS";
@@ -2081,6 +2083,7 @@ pub fn rustdesk_interval(i: Interval) -> ThrottledInterval {
 }
 
 pub fn load_custom_client() {
+    initialize_jwvisdesk_defaults();
     #[cfg(debug_assertions)]
     if let Ok(data) = std::fs::read_to_string("./custom.txt") {
         read_custom_client(data.trim());
@@ -2102,6 +2105,38 @@ pub fn load_custom_client() {
         read_custom_client(&data.trim());
     }
     load_jwvisdesk_config();
+}
+
+/// Apply JwVisDesk's locked identity and UI policy before any native service
+/// or configuration singleton can be initialized. The sidecar later supplies
+/// the server addresses and key, but these defaults must not depend on it.
+pub fn initialize_jwvisdesk_defaults() {
+    let current_app_name = get_app_name();
+    if current_app_name != "RustDesk" && current_app_name != JWVISDESK_APP_NAME {
+        return;
+    }
+    *config::APP_NAME.write().unwrap() = JWVISDESK_APP_NAME.to_owned();
+
+    let mut settings = config::OVERWRITE_SETTINGS.write().unwrap();
+    for (key, value) in [
+        ("access-mode", "full"),
+        ("enable-remote-printer", "N"),
+        ("enable-privacy-mode", "N"),
+    ] {
+        settings.insert(key.to_owned(), value.to_owned());
+    }
+    drop(settings);
+
+    let mut builtin = config::BUILTIN_SETTINGS.write().unwrap();
+    for key in [
+        keys::OPTION_HIDE_NETWORK_SETTINGS,
+        keys::OPTION_HIDE_SERVER_SETTINGS,
+        keys::OPTION_HIDE_PROXY_SETTINGS,
+        keys::OPTION_HIDE_WEBSOCKET_SETTINGS,
+        keys::OPTION_HIDE_REMOTE_PRINTER_SETTINGS,
+    ] {
+        builtin.insert(key.to_owned(), "Y".to_owned());
+    }
 }
 
 /// Load the unsigned, build-time JwVisDesk sidecar after the official custom
@@ -2244,6 +2279,7 @@ fn apply_custom_client_data(mut data: HashMap<String, Value>) {
 }
 
 fn apply_jwvisdesk_config_data(mut data: serde_json::Map<String, Value>) {
+    initialize_jwvisdesk_defaults();
     let server = match data.remove("network-config") {
         Some(network_config) => match network_config.as_str() {
             Some(network_config) => {
@@ -2356,12 +2392,28 @@ pub fn get_hwid() -> Bytes {
 
 #[inline]
 pub fn get_builtin_option(key: &str) -> String {
-    config::BUILTIN_SETTINGS
+    let configured = config::BUILTIN_SETTINGS
         .read()
         .unwrap()
         .get(key)
         .cloned()
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if !configured.is_empty() {
+        return configured;
+    }
+    if get_app_name() == JWVISDESK_APP_NAME
+        && [
+            keys::OPTION_HIDE_NETWORK_SETTINGS,
+            keys::OPTION_HIDE_SERVER_SETTINGS,
+            keys::OPTION_HIDE_PROXY_SETTINGS,
+            keys::OPTION_HIDE_WEBSOCKET_SETTINGS,
+            keys::OPTION_HIDE_REMOTE_PRINTER_SETTINGS,
+        ]
+        .contains(&key)
+    {
+        return "Y".to_owned();
+    }
+    String::new()
 }
 
 #[inline]
@@ -2736,6 +2788,62 @@ mod tests {
     };
 
     static JWVISDESK_CONFIG_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn jwvisdesk_runtime_defaults_are_isolated_before_sidecar_load() {
+        let _test_guard = JWVISDESK_CONFIG_TEST_MUTEX.lock().unwrap();
+        let _restore = JwVisDeskConfigRestore {
+            app_name: hbb_common::config::APP_NAME.read().unwrap().clone(),
+            overwrite_settings: hbb_common::config::OVERWRITE_SETTINGS
+                .read()
+                .unwrap()
+                .clone(),
+            builtin_settings: hbb_common::config::BUILTIN_SETTINGS.read().unwrap().clone(),
+        };
+        *hbb_common::config::APP_NAME.write().unwrap() = "RustDesk".to_owned();
+        hbb_common::config::OVERWRITE_SETTINGS
+            .write()
+            .unwrap()
+            .clear();
+        hbb_common::config::BUILTIN_SETTINGS
+            .write()
+            .unwrap()
+            .clear();
+        initialize_jwvisdesk_defaults();
+        assert_eq!(get_app_name(), "JwVisDesk");
+        assert_eq!(
+            hbb_common::config::OVERWRITE_SETTINGS
+                .read()
+                .unwrap()
+                .get("access-mode"),
+            Some(&"full".to_owned())
+        );
+        assert_eq!(
+            hbb_common::config::OVERWRITE_SETTINGS
+                .read()
+                .unwrap()
+                .get("enable-remote-printer"),
+            Some(&"N".to_owned())
+        );
+        assert_eq!(
+            hbb_common::config::OVERWRITE_SETTINGS
+                .read()
+                .unwrap()
+                .get("enable-privacy-mode"),
+            Some(&"N".to_owned())
+        );
+        assert_eq!(get_builtin_option(keys::OPTION_HIDE_NETWORK_SETTINGS), "Y");
+        assert_eq!(get_builtin_option(keys::OPTION_HIDE_SERVER_SETTINGS), "Y");
+        assert_eq!(get_builtin_option(keys::OPTION_HIDE_PROXY_SETTINGS), "Y");
+        assert_eq!(
+            get_builtin_option(keys::OPTION_HIDE_WEBSOCKET_SETTINGS),
+            "Y"
+        );
+        assert_eq!(
+            get_builtin_option(keys::OPTION_HIDE_REMOTE_PRINTER_SETTINGS),
+            "Y"
+        );
+    }
 
     struct JwVisDeskConfigRestore {
         app_name: String,

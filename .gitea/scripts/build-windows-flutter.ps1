@@ -722,8 +722,8 @@ try {
     Pop-Location
 
     $releaseSource = Join-Path $repo "flutter\build\windows\x64\runner\Release"
-    if (-not (Test-Path -LiteralPath (Join-Path $releaseSource "rustdesk.exe"))) {
-        throw "Flutter Release output does not contain rustdesk.exe: $releaseSource"
+    if (-not (Test-Path -LiteralPath (Join-Path $releaseSource $appExecutable))) {
+        throw "Flutter Release output does not contain $appExecutable: $releaseSource"
     }
     New-Item -ItemType Directory -Path $portable -Force | Out-Null
     Copy-Item -Path (Join-Path $releaseSource "*") -Destination $portable -Recurse -Force
@@ -732,7 +732,8 @@ try {
         "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $PSScriptRoot "prepare-jwvisdesk.ps1"),
         "-PortablePath", $portable,
-        "-AppName", $appName
+        "-AppName", $appName,
+        "-SourceExecutable", $appExecutable
     )
     Add-UsbDriver $portable $buildRoot
     Add-PrinterDriver $portable $buildRoot
