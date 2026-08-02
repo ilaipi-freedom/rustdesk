@@ -788,15 +788,15 @@ try {
         "-PackagesDirectory", (Join-Path $msiRoot "packages")
     )
     # Restore the WiX SDK PackageReferences before building the solution. The
-    # runner only has the VS18 C++ toolset, while the project keeps v143 for
-    # compatibility with the upstream Windows workflow.
+    # The VS18 worker exposes the v145 platform toolset (MSVC 14.51), while
+    # the project keeps v143 for compatibility with the upstream workflow.
     Invoke-Checked "msbuild" @(
         $msiSolution,
         "/restore",
         "-p:Configuration=Release",
         "-p:Platform=x64",
         "/p:TargetVersion=Windows10",
-        "/p:PlatformToolset=v180"
+        "/p:PlatformToolset=v145"
     )
     Pop-Location
 
