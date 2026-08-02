@@ -123,11 +123,27 @@ function Initialize-Flutter {
     $flutterBin = Join-Path $flutterRoot "bin"
     $flutterCommand = Join-Path $flutterBin "flutter.bat"
     $archive = Join-Path $flutterCache "flutter-$flutterVersion-windows-x64.zip"
+    $archiveCandidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:RUSTDESK_FLUTTER_ARCHIVE)) {
+        $archiveCandidates += [Environment]::ExpandEnvironmentVariables($env:RUSTDESK_FLUTTER_ARCHIVE)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $archiveCandidates += Join-Path $env:USERPROFILE "Downloads\flutter_windows_${flutterVersion}-stable.zip"
+    }
+    $archiveCandidates += "C:\Users\Smark\Downloads\flutter_windows_${flutterVersion}-stable.zip"
 
     New-Item -ItemType Directory -Path $flutterCache -Force | Out-Null
     if (-not (Test-Path -LiteralPath $flutterCommand)) {
         if (-not (Test-Path -LiteralPath $archive)) {
-            Download-File $flutterUri $archive
+            $localArchive = $archiveCandidates |
+                Where-Object { Test-Path -LiteralPath $_ } |
+                Select-Object -First 1
+            if (-not [string]::IsNullOrWhiteSpace($localArchive)) {
+                $archive = $localArchive
+                Write-Host "Using local Flutter archive $archive."
+            } else {
+                Download-File $flutterUri $archive
+            }
         }
         Remove-Directory $flutterRoot
         Expand-Archive -LiteralPath $archive -DestinationPath $flutterCache -Force
