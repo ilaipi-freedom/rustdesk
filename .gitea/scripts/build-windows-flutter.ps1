@@ -191,12 +191,44 @@ function Initialize-Llvm {
     $llvmCache = Join-Path $Root "tools\llvm"
     $llvmInstaller = Join-Path $llvmCache "LLVM-$llvmVersion-win64.exe"
     $llvmBin = Join-Path $llvmCache "bin"
+    $llvmInstallerCandidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:RUSTDESK_LLVM_INSTALLER)) {
+        $llvmInstallerCandidates += [Environment]::ExpandEnvironmentVariables($env:RUSTDESK_LLVM_INSTALLER)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $llvmInstallerCandidates += Join-Path $env:USERPROFILE "Downloads\LLVM-$llvmVersion-win64.exe"
+    }
+    $llvmInstallerCandidates += "C:\Users\Smark\Downloads\LLVM-$llvmVersion-win64.exe"
+
     New-Item -ItemType Directory -Path $llvmCache -Force | Out-Null
     if (-not (Test-Path -LiteralPath (Join-Path $llvmBin "clang.exe"))) {
         if (-not (Test-Path -LiteralPath $llvmInstaller)) {
-            Download-File $llvmUri $llvmInstaller
+            $localInstaller = $llvmInstallerCandidates |
+                Where-Object { Test-Path -LiteralPath $_ } |
+                Select-Object -First 1
+            if (-not [string]::IsNullOrWhiteSpace($localInstaller)) {
+                $llvmInstaller = $localInstaller
+                Write-Host "Using local LLVM installer $llvmInstaller."
+            } else {
+                Download-File $llvmUri $llvmInstaller
+            }
         }
-        Invoke-Checked $llvmInstaller @("/S", "/D=$llvmCache")
+        Write-Host "> $llvmInstaller /S /D=$llvmCache"
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            & $llvmInstaller "/S" "/D=$llvmCache" 2>&1 | ForEach-Object { Write-Host $_ }
+            $llvmExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        if ($llvmExitCode -ne 0 -and -not (Test-Path -LiteralPath (Join-Path $llvmBin "clang.exe"))) {
+            throw "LLVM installer failed with exit code ${llvmExitCode}: $llvmInstaller"
+        }
+        if ($llvmExitCode -ne 0) {
+            Write-Warning "LLVM installer returned exit code $llvmExitCode, but clang.exe is present; continuing."
+        }
     }
     if (-not (Test-Path -LiteralPath (Join-Path $llvmBin "clang.exe"))) {
         throw "LLVM $llvmVersion was not installed at $llvmBin."
