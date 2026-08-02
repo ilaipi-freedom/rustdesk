@@ -690,6 +690,12 @@ try {
     }
 
     New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
+    Invoke-Checked "powershell.exe" @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $PSScriptRoot "prepare-jwvisdesk-source.ps1"),
+        "-RepoRoot", $repo
+    )
     Initialize-RustToolchain $buildRoot
     Initialize-Flutter $buildRoot
     Initialize-Llvm $buildRoot
