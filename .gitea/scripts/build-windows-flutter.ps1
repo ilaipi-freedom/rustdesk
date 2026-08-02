@@ -425,6 +425,68 @@ endif()
     Write-Host "Configured vcpkg to use NASM $vcpkgNasmVersion for AOM compatibility."
 }
 
+function Replace-ByteSequence {
+    param(
+        [Parameter(Mandatory = $true)][byte[]]$Data,
+        [Parameter(Mandatory = $true)][byte[]]$Old,
+        [Parameter(Mandatory = $true)][byte[]]$New
+    )
+
+    if ($Old.Length -ne $New.Length) {
+        throw "Flutter snapshot replacement strings must have the same byte length."
+    }
+    for ($i = 0; $i -le $Data.Length - $Old.Length; $i++) {
+        $matches = $true
+        for ($j = 0; $j -lt $Old.Length; $j++) {
+            if ($Data[$i + $j] -ne $Old[$j]) {
+                $matches = $false
+                break
+            }
+        }
+        if ($matches) {
+            for ($j = 0; $j -lt $New.Length; $j++) {
+                $Data[$i + $j] = $New[$j]
+            }
+            return $true
+        }
+    }
+    return $false
+}
+
+function Patch-FlutterVisualStudioGenerator {
+    param([Parameter(Mandatory = $true)][string]$FlutterRoot)
+
+    # Flutter 3.24.5 only maps VS major versions 16/17. Its prebuilt tool
+    # therefore asks CMake 4.4 to use the obsolete VS2019 generator on VS2026.
+    # The VS2026 generator has the same byte length, so patch the cached Dart
+    # snapshot without requiring a Flutter SDK rebuild.
+    $snapshot = Join-Path $FlutterRoot "bin\cache\flutter_tools.snapshot"
+    if (-not (Test-Path -LiteralPath $snapshot)) {
+        throw "Flutter tool snapshot was not found at $snapshot."
+    }
+
+    $bytes = [IO.File]::ReadAllBytes($snapshot)
+    $patched = $false
+    foreach ($encoding in @([Text.Encoding]::UTF8, [Text.Encoding]::Unicode)) {
+        $old = $encoding.GetBytes("Visual Studio 16 2019")
+        $new = $encoding.GetBytes("Visual Studio 18 2026")
+        if (Replace-ByteSequence $bytes $old $new) {
+            $patched = $true
+            break
+        }
+        if (Replace-ByteSequence $bytes $new $new) {
+            Write-Host "Flutter snapshot already uses the Visual Studio 18 2026 generator."
+            return
+        }
+    }
+
+    if (-not $patched) {
+        throw "Flutter snapshot does not contain a Visual Studio 16 2019 generator string."
+    }
+    [IO.File]::WriteAllBytes($snapshot, $bytes)
+    Write-Host "Patched Flutter snapshot to use the Visual Studio 18 2026 generator."
+}
+
 function Apply-FlutterPatch {
     param(
         [Parameter(Mandatory = $true)][string]$FlutterRoot,
@@ -574,6 +636,7 @@ try {
     $flutterCommand = Get-Command flutter
     $flutterPath = if (-not [string]::IsNullOrWhiteSpace($flutterCommand.Source)) { $flutterCommand.Source } else { $flutterCommand.Definition }
     $flutterRoot = Split-Path (Split-Path $flutterPath -Parent) -Parent
+    Patch-FlutterVisualStudioGenerator $flutterRoot
     $flutterVersionOutput = (& flutter --version 2>&1 | Out-String).Trim()
     Write-Host $flutterVersionOutput
     if ($flutterVersionOutput -notmatch [regex]::Escape($flutterVersion)) {
