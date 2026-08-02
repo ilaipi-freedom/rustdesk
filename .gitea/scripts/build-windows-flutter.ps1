@@ -16,6 +16,7 @@ $bridgeVersion = "1.80.1"
 $vcpkgCommit = "120deac3062162151622ca4860575a33844ba10b"
 $vcpkgTriplet = "x64-windows-static"
 $rustTarget = "x86_64-pc-windows-msvc"
+$rustupUri = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
 
 function Require-Command {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -47,6 +48,47 @@ function Download-File {
 
     Write-Host "Downloading $Uri"
     Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Path
+}
+
+function Initialize-RustToolchain {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $configuredCache = $env:RUSTDESK_TOOL_CACHE
+    $cacheRoot = if ([string]::IsNullOrWhiteSpace($configuredCache)) {
+        Join-Path $Root "tools\rust"
+    } else {
+        [Environment]::ExpandEnvironmentVariables($configuredCache)
+    }
+    $cacheRoot = [IO.Path]::GetFullPath($cacheRoot)
+    $cargoHome = Join-Path $cacheRoot "cargo"
+    $rustupHome = Join-Path $cacheRoot "rustup"
+    $cargoBin = Join-Path $cargoHome "bin"
+    $rustup = Join-Path $cargoBin "rustup.exe"
+    $installer = Join-Path $cacheRoot "rustup-init.exe"
+
+    New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $cargoHome -Force | Out-Null
+    New-Item -ItemType Directory -Path $rustupHome -Force | Out-Null
+    $env:CARGO_HOME = $cargoHome
+    $env:RUSTUP_HOME = $rustupHome
+    if ($env:Path -notlike "*$cargoBin*") {
+        $env:Path = "$cargoBin;$env:Path"
+    }
+
+    if (-not (Test-Path -LiteralPath $rustup)) {
+        if (-not (Test-Path -LiteralPath $installer)) {
+            Download-File $rustupUri $installer
+        }
+        Invoke-Checked $installer @("--no-modify-path", "-y", "--default-toolchain", "none", "--profile", "minimal")
+    }
+    if (-not (Test-Path -LiteralPath $rustup)) {
+        throw "rustup bootstrap did not create the expected executable: $rustup"
+    }
+
+    Invoke-Checked $rustup @("toolchain", "install", $rustVersion, "--profile", "minimal")
+    Invoke-Checked $rustup @("target", "add", $rustTarget, "--toolchain", $rustVersion)
+    Invoke-Checked "cargo" @("+$rustVersion", "--version")
+    Write-Host "Using Rust $rustVersion from $cacheRoot."
 }
 
 function Remove-Directory {
@@ -209,6 +251,9 @@ try {
         throw "The Gitea worker must be a 64-bit Windows host."
     }
 
+    New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
+    Initialize-RustToolchain $buildRoot
+
     @("git", "python", "cargo", "rustup", "flutter", "clang", "cmake", "ninja", "msbuild", "nuget") | ForEach-Object {
         Require-Command $_
     }
@@ -216,7 +261,6 @@ try {
         Write-Host "VCPKG_ROOT is not configured; a workspace-local vcpkg checkout will be used."
     }
 
-    New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
     Remove-Directory $stage
     Remove-Directory $packerRoot
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
@@ -250,7 +294,7 @@ try {
     Invoke-Checked "rustup" @("toolchain", "install", $rustVersion, "--profile", "minimal")
     Invoke-Checked "rustup" @("target", "add", $rustTarget, "--toolchain", $rustVersion)
     $env:RUSTUP_TOOLCHAIN = $rustVersion
-    $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+    $cargoBin = Join-Path $env:CARGO_HOME "bin"
     if ($env:Path -notlike "*$cargoBin*") {
         $env:Path = "$cargoBin;$env:Path"
     }
