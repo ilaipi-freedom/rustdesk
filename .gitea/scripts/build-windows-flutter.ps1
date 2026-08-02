@@ -11,6 +11,7 @@ $destination = "D:\work\YYM\release\jwvisdesk"
 $flutterVersion = "3.24.5"
 $rustVersion = "1.75"
 $llvmVersion = "15.0.6"
+$llvmUri = "https://github.com/llvm/llvm-project/releases/download/llvmorg-${llvmVersion}/LLVM-${llvmVersion}-win64.exe"
 $cargoExpandVersion = "1.0.95"
 $bridgeVersion = "1.80.1"
 $vcpkgCommit = "120deac3062162151622ca4860575a33844ba10b"
@@ -156,6 +157,54 @@ function Initialize-Flutter {
         $env:Path = "$flutterBin;$env:Path"
     }
     Write-Host "Using Flutter $flutterVersion from $flutterRoot."
+}
+
+function Initialize-Llvm {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    if (Get-Command "clang" -ErrorAction SilentlyContinue) {
+        Write-Host "Using LLVM already available on PATH."
+        return
+    }
+
+    $llvmBinCandidates = @(
+        "C:\Program Files\LLVM\bin",
+        "C:\Program Files (x86)\LLVM\bin"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($env:LLVM_ROOT)) {
+        $llvmBinCandidates += $env:LLVM_ROOT
+        $llvmBinCandidates += Join-Path $env:LLVM_ROOT "bin"
+    }
+    $llvmBinCandidates += Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName "VC\Tools\Llvm\x64\bin" }
+
+    foreach ($llvmBin in ($llvmBinCandidates | Select-Object -Unique)) {
+        if (Test-Path -LiteralPath (Join-Path $llvmBin "clang.exe")) {
+            if ($env:Path -notlike "*$llvmBin*") {
+                $env:Path = "$llvmBin;$env:Path"
+            }
+            Write-Host "Using LLVM from $llvmBin."
+            return
+        }
+    }
+
+    $llvmCache = Join-Path $Root "tools\llvm"
+    $llvmInstaller = Join-Path $llvmCache "LLVM-$llvmVersion-win64.exe"
+    $llvmBin = Join-Path $llvmCache "bin"
+    New-Item -ItemType Directory -Path $llvmCache -Force | Out-Null
+    if (-not (Test-Path -LiteralPath (Join-Path $llvmBin "clang.exe"))) {
+        if (-not (Test-Path -LiteralPath $llvmInstaller)) {
+            Download-File $llvmUri $llvmInstaller
+        }
+        Invoke-Checked $llvmInstaller @("/S", "/D=$llvmCache")
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $llvmBin "clang.exe"))) {
+        throw "LLVM $llvmVersion was not installed at $llvmBin."
+    }
+    if ($env:Path -notlike "*$llvmBin*") {
+        $env:Path = "$llvmBin;$env:Path"
+    }
+    Write-Host "Using LLVM $llvmVersion from $llvmCache."
 }
 
 function Get-VcpkgRoot {
@@ -313,6 +362,7 @@ try {
     New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
     Initialize-RustToolchain $buildRoot
     Initialize-Flutter $buildRoot
+    Initialize-Llvm $buildRoot
 
     @("git", "python", "cargo", "rustup", "flutter", "clang", "cmake", "ninja", "msbuild", "nuget") | ForEach-Object {
         Require-Command $_
