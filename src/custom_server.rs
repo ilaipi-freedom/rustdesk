@@ -1,6 +1,9 @@
 use hbb_common::{
     bail,
-    base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _},
+    base64::{
+        engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
+        Engine as _,
+    },
     sodiumoxide::crypto::sign,
     ResultType,
 };
@@ -25,7 +28,12 @@ fn get_custom_server_from_config_string(s: &str) -> ResultType<CustomServer> {
         12, 46, 129, 83, 17, 84, 193, 119, 197, 130, 103,
     ];
     let pk = sign::PublicKey(*PK);
-    let data = URL_SAFE_NO_PAD.decode(tmp)?;
+    // Flutter's ServerConfig.encode() uses base64UrlEncode(), which retains
+    // `=` padding before reversing the string.  Older RustDesk license names
+    // use the unpadded form, so accept both representations here.
+    let data = URL_SAFE
+        .decode(&tmp)
+        .or_else(|_| URL_SAFE_NO_PAD.decode(&tmp))?;
     if let Ok(lic) = serde_json::from_slice::<CustomServer>(&data) {
         return Ok(lic);
     }
@@ -37,6 +45,12 @@ fn get_custom_server_from_config_string(s: &str) -> ResultType<CustomServer> {
 }
 
 pub fn get_custom_server_from_string(s: &str) -> ResultType<CustomServer> {
+    // Flutter accepts a plain JSON object as a backwards-compatible server
+    // configuration.  Supporting it here also makes the build-time sidecar
+    // independent of the exact export encoding used by the UI version.
+    if let Ok(server) = serde_json::from_str::<CustomServer>(s.trim()) {
+        return Ok(server);
+    }
     let s = if s.to_lowercase().ends_with(".exe.exe") {
         &s[0..s.len() - 8]
     } else if s.to_lowercase().ends_with(".exe") {
@@ -229,5 +243,37 @@ mod test {
         let exported = encoded.chars().rev().collect::<String>();
 
         assert_eq!(get_custom_server_from_string(&exported).unwrap(), source);
+    }
+
+    #[test]
+    fn test_network_config_round_trip_with_flutter_padding() {
+        let source = CustomServer {
+            host: "id.example.test".to_owned(),
+            relay: "relay.example.test".to_owned(),
+            api: "https://api.example.test".to_owned(),
+            // This length produces `=` padding in Flutter's base64UrlEncode.
+            key: "abc".to_owned(),
+        };
+        let encoded = URL_SAFE
+            .encode(serde_json::to_vec(&source).unwrap())
+            .chars()
+            .rev()
+            .collect::<String>();
+
+        assert!(encoded.starts_with('='));
+        assert_eq!(get_custom_server_from_string(&encoded).unwrap(), source);
+    }
+
+    #[test]
+    fn test_network_config_plain_json() {
+        let source = CustomServer {
+            host: "id.example.test".to_owned(),
+            relay: "relay.example.test".to_owned(),
+            api: "https://api.example.test".to_owned(),
+            key: "server-public-key".to_owned(),
+        };
+        let json = serde_json::to_string(&source).unwrap();
+
+        assert_eq!(get_custom_server_from_string(&json).unwrap(), source);
     }
 }
